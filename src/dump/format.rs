@@ -41,6 +41,45 @@ pub fn write_create_table(out: &mut String, table: &TableInfo) {
     out.push_str(");\n");
 }
 
+/// Write table data as a raw COPY data string (rows only, no header/footer).
+///
+/// Returns just the tab-separated rows suitable for embedding in a custom archive.
+pub async fn write_table_data_to_string(
+    client: &Client,
+    table: &TableInfo,
+    opts: &DumpOptions,
+) -> Result<String> {
+    let qname = table.qualified_name();
+    let col_names: Vec<String> = table.columns.iter().map(|c| quote_ident(&c.name)).collect();
+    let col_list = col_names.join(", ");
+
+    let query = format!("select {col_list} from {qname} order by 1");
+    let rows = client
+        .query(&query, &[])
+        .await
+        .with_context(|| format!("query data from {qname}"))?;
+
+    if rows.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut data = String::new();
+    for row in &rows {
+        let mut values = Vec::new();
+        for (i, _col) in table.columns.iter().enumerate() {
+            values.push(format_copy_value(row, i));
+        }
+        data.push_str(&values.join("\t"));
+        data.push('\n');
+    }
+
+    // For custom format, we always write COPY data regardless of --inserts.
+    // inserts flag only applies to plain format.
+    let _ = opts;
+
+    Ok(data)
+}
+
 /// Write table data as COPY or INSERT statements.
 pub async fn write_table_data(
     out: &mut String,

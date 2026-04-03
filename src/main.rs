@@ -150,11 +150,24 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
         no_privileges: args.no_privileges,
     };
 
-    let output = dump::dump_plain(&opts).await?;
-
-    match args.file {
-        Some(ref path) => std::fs::write(path, &output)?,
-        None => print!("{output}"),
+    match args.format {
+        DumpFormat::Custom => {
+            let bytes = dump::dump_custom(&opts).await?;
+            match args.file {
+                Some(ref path) => std::fs::write(path, &bytes)?,
+                None => {
+                    use std::io::Write;
+                    std::io::stdout().write_all(&bytes)?;
+                }
+            }
+        }
+        _ => {
+            let output = dump::dump_plain(&opts).await?;
+            match args.file {
+                Some(ref path) => std::fs::write(path, &output)?,
+                None => print!("{output}"),
+            }
+        }
     }
 
     Ok(())
