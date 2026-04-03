@@ -3,9 +3,9 @@
 
 //! pg_plumbing — pg_dump/pg_restore rewritten in Rust.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
-use pg_plumbing::dump;
+use pg_plumbing::{dump, restore};
 
 /// pg_dump/pg_restore rewritten in Rust.
 #[derive(Parser, Debug)]
@@ -19,6 +19,8 @@ struct Cli {
 enum Command {
     /// Dump a PostgreSQL database into a script file or archive.
     PgDump(PgDumpArgs),
+    /// Restore a PostgreSQL database from an archive created by pg_dump.
+    PgRestore(PgRestoreArgs),
 }
 
 /// Arguments for the pg_dump subcommand.
@@ -102,11 +104,27 @@ pub enum DumpFormat {
     Tar,
 }
 
+/// Arguments for the pg-restore subcommand.
+#[derive(Parser, Debug)]
+pub struct PgRestoreArgs {
+    /// Target database name or connection string.
+    #[arg(short = 'd', long = "dbname")]
+    dbname: Option<String>,
+
+    /// Drop database objects before recreating them.
+    #[arg(short = 'c', long = "clean")]
+    clean: bool,
+
+    /// Input archive file (positional).
+    filename: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::PgDump(args) => run_pg_dump(args).await,
+        Command::PgRestore(args) => run_pg_restore(args).await,
     }
 }
 
@@ -140,4 +158,32 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn run_pg_restore(args: PgRestoreArgs) -> Result<()> {
+    let dbname = match args.dbname {
+        Some(ref d) => d.clone(),
+        None => bail!("pg_restore: no database specified (use -d)"),
+    };
+
+    let filename = match args.filename {
+        Some(ref f) => f.clone(),
+        None => bail!("pg_restore: no input file specified"),
+    };
+
+    let sql = if filename == "-" {
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        buf
+    } else {
+        std::fs::read_to_string(&filename)?
+    };
+
+    let opts = restore::RestoreOptions {
+        dbname,
+        clean: args.clean,
+    };
+
+    restore::restore_plain(&sql, &opts).await
 }

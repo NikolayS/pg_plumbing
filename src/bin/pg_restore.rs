@@ -3,6 +3,7 @@
 
 //! pg_restore — restore a PostgreSQL database from an archive.
 
+use anyhow::{bail, Result};
 use clap::Parser;
 
 /// pg_restore restores a PostgreSQL database from an archive
@@ -16,7 +17,15 @@ use clap::Parser;
     about = "pg_restore restores a PostgreSQL database from an archive created by pg_dump."
 )]
 struct Cli {
-    /// Archive file to restore
+    /// Target database name or connection string.
+    #[arg(short = 'd', long = "dbname")]
+    dbname: Option<String>,
+
+    /// Drop database objects before recreating them.
+    #[arg(short = 'c', long = "clean")]
+    clean: bool,
+
+    /// Archive file to restore (positional).
     filename: Option<String>,
 }
 
@@ -25,10 +34,33 @@ fn pg_restore_version() -> &'static str {
     concat!("pg_restore (pg_plumbing) ", env!("CARGO_PKG_VERSION"))
 }
 
-fn main() -> anyhow::Result<()> {
-    let _cli = Cli::parse();
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
 
-    // Restore logic not yet implemented.
-    eprintln!("pg_restore: not yet implemented");
-    std::process::exit(1);
+    let dbname = match cli.dbname {
+        Some(ref d) => d.clone(),
+        None => bail!("pg_restore: no database specified (use -d)"),
+    };
+
+    let filename = match cli.filename {
+        Some(ref f) => f.clone(),
+        None => bail!("pg_restore: no input file specified"),
+    };
+
+    let sql = if filename == "-" {
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        buf
+    } else {
+        std::fs::read_to_string(&filename)?
+    };
+
+    let opts = pg_plumbing::restore::RestoreOptions {
+        dbname,
+        clean: cli.clean,
+    };
+
+    pg_plumbing::restore::restore_plain(&sql, &opts).await
 }
