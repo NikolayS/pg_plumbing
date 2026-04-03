@@ -363,9 +363,26 @@ fn comment_on_domain_constraint() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
-/// COPY test_table — default data output format.
-fn copy_test_table() {}
+/// COPY dump_test_simple — default data output format.
+/// Un-ignored: tests basic COPY output for plain-format dump.
+fn copy_test_table() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-t", "dump_test_simple", "-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("COPY public.dump_test_simple"),
+        "output should contain COPY statement:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("alice"),
+        "output should contain row data 'alice':\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\\.\n"),
+        "output should contain end-of-data marker:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore]
@@ -384,9 +401,27 @@ fn copy_other_tables() {}
 fn copy_test_table_identity() {}
 
 #[test]
-#[ignore]
-/// INSERT INTO test_table — inserts/column_inserts mode.
-fn insert_into_test_table() {}
+/// INSERT INTO dump_test_simple — inserts mode.
+/// Un-ignored: tests basic INSERT output for plain-format dump.
+fn insert_into_test_table() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-t", "dump_test_simple", "-d", "postgres", "--inserts"]);
+    assert_eq!(code, 0, "pg_dump --inserts should succeed");
+    assert!(
+        stdout.contains("INSERT INTO public.dump_test_simple VALUES"),
+        "output should contain INSERT statements:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("'alice'"),
+        "output should contain row data 'alice':\n{stdout}"
+    );
+    // Should NOT contain COPY when using --inserts.
+    assert!(
+        !stdout.contains("COPY public.dump_test_simple"),
+        "output should NOT contain COPY with --inserts:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore]
@@ -721,9 +756,30 @@ fn create_schemas() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
-/// CREATE TABLE test_table with columns, constraints, and settings.
-fn create_test_table() {}
+/// CREATE TABLE dump_test_simple with columns, constraints, and settings.
+/// Un-ignored: tests basic CREATE TABLE output for plain-format dump.
+fn create_test_table() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-t", "dump_test_simple", "-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TABLE public.dump_test_simple"),
+        "output should contain CREATE TABLE:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("id integer"),
+        "output should contain column 'id integer':\n{stdout}"
+    );
+    assert!(
+        stdout.contains("name text NOT NULL"),
+        "output should contain 'name text NOT NULL':\n{stdout}"
+    );
+    assert!(
+        stdout.contains("PRIMARY KEY (id)"),
+        "output should contain primary key constraint:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore]
@@ -1011,14 +1067,52 @@ fn run_column_inserts() {}
 fn run_createdb() {}
 
 #[test]
-#[ignore]
-/// data_only: pg_dump --data-only with --disable-triggers.
-fn run_data_only() {}
+/// data_only: pg_dump --data-only outputs only COPY, no CREATE TABLE.
+/// Un-ignored: tests --data-only flag.
+fn run_data_only() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-t", "dump_test_simple", "-d", "postgres", "-a"]);
+    assert_eq!(code, 0, "pg_dump --data-only should succeed");
+    assert!(
+        !stdout.contains("CREATE TABLE"),
+        "data-only output should NOT contain CREATE TABLE:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("COPY public.dump_test_simple"),
+        "data-only output should contain COPY:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore]
-/// defaults: pg_dump with no special flags (baseline).
-fn run_defaults() {}
+/// defaults: pg_dump of a single table with no special flags (baseline).
+/// Un-ignored: tests that default plain-format dump produces valid output.
+fn run_defaults() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-t", "dump_test_simple", "-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should exit 0");
+    assert!(
+        stdout.contains("PostgreSQL database dump"),
+        "output should contain header:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("SET statement_timeout = 0"),
+        "output should contain SET commands:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("CREATE TABLE"),
+        "output should contain CREATE TABLE:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("COPY"),
+        "output should contain COPY:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("PostgreSQL database dump complete"),
+        "output should contain footer:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore]
@@ -1149,9 +1243,26 @@ fn run_only_measurement() {}
 fn run_role() {}
 
 #[test]
-#[ignore]
-/// schema_only / schema_only_with_statistics: pg_dump --schema-only.
-fn run_schema_only() {}
+/// schema_only: pg_dump --schema-only outputs CREATE TABLE but no data.
+/// Un-ignored: tests --schema-only flag.
+fn run_schema_only() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-t", "dump_test_simple", "-d", "postgres", "-s"]);
+    assert_eq!(code, 0, "pg_dump --schema-only should succeed");
+    assert!(
+        stdout.contains("CREATE TABLE public.dump_test_simple"),
+        "schema-only output should contain CREATE TABLE:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("COPY public.dump_test_simple"),
+        "schema-only output should NOT contain COPY:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("alice"),
+        "schema-only output should NOT contain row data:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore]
