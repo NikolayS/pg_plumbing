@@ -53,7 +53,7 @@ pub async fn write_table_data_to_string(
     let col_names: Vec<String> = table.columns.iter().map(|c| quote_ident(&c.name)).collect();
     let col_list = col_names.join(", ");
 
-    let query = format!("select {col_list} from {qname} order by 1");
+    let query = format!("select {col_list} from {qname}");
     let rows = client
         .query(&query, &[])
         .await
@@ -91,7 +91,7 @@ pub async fn write_table_data(
     let col_names: Vec<String> = table.columns.iter().map(|c| quote_ident(&c.name)).collect();
     let col_list = col_names.join(", ");
 
-    let query = format!("select {col_list} from {qname} order by 1");
+    let query = format!("select {col_list} from {qname}");
     let rows = client
         .query(&query, &[])
         .await

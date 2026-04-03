@@ -332,6 +332,23 @@ pub fn read_str(r: &mut impl std::io::Read) -> io::Result<String> {
     Ok(String::from_utf8_lossy(&buf).to_string())
 }
 
+/// Read a PostgreSQL archive string returning `None` for NULL (-1 length) and
+/// `Some(s)` for any non-NULL string (including empty strings with length 0).
+///
+/// Use this wherever NULL is semantically distinct from an empty string, e.g.
+/// when reading the NULL-terminated dependency list in a TOC entry.
+pub fn read_opt_str(r: &mut impl std::io::Read) -> io::Result<Option<String>> {
+    let mut len_bytes = [0u8; 4];
+    r.read_exact(&mut len_bytes)?;
+    let len = i32::from_le_bytes(len_bytes);
+    if len < 0 {
+        return Ok(None); // NULL sentinel
+    }
+    let mut buf = vec![0u8; len as usize];
+    r.read_exact(&mut buf)?;
+    Ok(Some(String::from_utf8_lossy(&buf).to_string()))
+}
+
 /// Read a file offset (1-byte flag + 8 bytes).
 pub fn read_offset(r: &mut impl std::io::Read) -> io::Result<u64> {
     let mut flag = [0u8; 1];
@@ -379,17 +396,18 @@ pub fn read_toc_entry(r: &mut impl std::io::Read) -> io::Result<ParsedTocEntry> 
     let _with_oids = read_str(r)?;
 
     // Read dependency list (strings, terminated by NULL/-1).
+    // Use read_opt_str so that None (NULL, length=-1) is the sentinel and
+    // Some("") (empty string, length=0) is treated as a valid (if unusual)
+    // dependency ID rather than silently ending the list.
     let mut deps = Vec::new();
     loop {
-        let s = read_str(r)?;
-        if s.is_empty() {
-            // Check if it was a NULL terminator by looking at what read_str returned.
-            // We distinguish NULL (-1) from empty (0) by re-reading — but since read_str
-            // converts NULL to "", we terminate on empty string (our terminator is NULL).
-            break;
-        }
-        if let Ok(id) = s.parse::<i32>() {
-            deps.push(id);
+        match read_opt_str(r)? {
+            None => break, // NULL sentinel — end of dependency list
+            Some(s) => {
+                if let Ok(id) = s.parse::<i32>() {
+                    deps.push(id);
+                }
+            }
         }
     }
 

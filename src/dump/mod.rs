@@ -199,7 +199,6 @@ pub async fn dump_custom(opts: &DumpOptions) -> Result<Vec<u8>> {
     }
 
     // Write data entries with placeholder offset=0.
-    let data_toc_start = toc_buf.len();
     let mut data_entry_offsets: Vec<usize> = Vec::new(); // byte position of each data TOC entry
 
     for (entry, _) in &table_data {
@@ -207,7 +206,6 @@ pub async fn dump_custom(opts: &DumpOptions) -> Result<Vec<u8>> {
         write_toc_entry(&mut toc_buf, entry)
             .map_err(|e| anyhow::anyhow!("write data TOC entry: {e}"))?;
     }
-    let _ = data_toc_start;
 
     // ── Stage 2: write data blocks, tracking offsets ───────────────────────
     let header_toc_len = toc_buf.len();
