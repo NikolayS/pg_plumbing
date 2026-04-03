@@ -4,6 +4,7 @@
 //! pg_restore — restore a PostgreSQL database from an archive.
 
 use clap::Parser;
+use pg_plumbing::restore;
 
 /// pg_restore restores a PostgreSQL database from an archive
 /// created by pg_dump.
@@ -219,9 +220,51 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Actual restore not yet implemented.
-    eprintln!("pg_restore: not yet implemented");
-    std::process::exit(1);
+    // Require a database target.
+    let dbname = match cli.dbname {
+        Some(ref d) => d.clone(),
+        None => {
+            eprintln!("pg_restore: no database specified (use -d)");
+            std::process::exit(1);
+        }
+    };
+
+    // Require a positional file.
+    let filename = match cli.filenames.first() {
+        Some(f) => f.clone(),
+        None => {
+            eprintln!("pg_restore: no input file specified");
+            std::process::exit(1);
+        }
+    };
+
+    let file_bytes = std::fs::read(&filename).unwrap_or_else(|e| {
+        eprintln!("pg_restore: could not open file \"{filename}\": {e}");
+        std::process::exit(1);
+    });
+
+    let opts = restore::RestoreOptions {
+        dbname,
+        clean: cli.clean,
+    };
+
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+    if restore::is_custom_format(&file_bytes) {
+        rt.block_on(restore::restore_custom(&file_bytes, &opts))
+            .unwrap_or_else(|e| {
+                eprintln!("pg_restore: {e}");
+                std::process::exit(1);
+            });
+    } else {
+        // Assume plain SQL format.
+        let sql = String::from_utf8_lossy(&file_bytes).to_string();
+        rt.block_on(restore::restore_plain(&sql, &opts))
+            .unwrap_or_else(|e| {
+                eprintln!("pg_restore: {e}");
+                std::process::exit(1);
+            });
+    }
 }
 
 fn validate_format(fmt: &str) -> bool {
