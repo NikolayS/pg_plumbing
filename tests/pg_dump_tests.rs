@@ -3,4 +3,5 @@
 
 //! Root test harness for pg_dump integration tests.
 
+mod common;
 mod pg_dump;

@@ -12,6 +12,8 @@ license = "MIT"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-postgres = "0.7"
 
 [[bin]]
 name = "pg_dump"
@@ -26,3 +28,4 @@ name = "pg_plumbing"
 path = "src/main.rs"
 
 [dev-dependencies]
+tempfile = "3"
