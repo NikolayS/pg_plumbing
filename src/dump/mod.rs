@@ -4,6 +4,7 @@
 //! pg_dump implementation.
 
 pub mod catalog;
+pub mod directory_format;
 pub mod filter;
 pub mod format;
 
