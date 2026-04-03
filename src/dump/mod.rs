@@ -2,7 +2,3 @@
 // SPDX-License-Identifier: MIT
 
 //! pg_dump implementation.
-
-pub mod catalog;
-pub mod filter;
-pub mod format;

@@ -1,14 +1,16 @@
+# Copyright 2026 pg_plumbing contributors
+# SPDX-License-Identifier: MIT
+
 [package]
 name = "pg_plumbing"
 version = "0.1.0"
 edition = "2021"
 description = "pg_dump/pg_restore rewritten in Rust"
 license = "MIT"
-repository = "https://github.com/NikolayS/pg_plumbing"
 
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
-tokio = { version = "1", features = ["full"] }
-tokio-postgres = "0.7"
+
+[dev-dependencies]
