@@ -26,6 +26,10 @@ name = "pg_restore"
 path = "src/bin/pg_restore.rs"
 
 [[bin]]
+name = "pg_dumpall"
+path = "src/bin/pg_dumpall.rs"
+
+[[bin]]
 name = "pg_plumbing"
 path = "src/main.rs"
 

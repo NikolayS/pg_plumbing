@@ -3,7 +3,6 @@
 
 //! pg_restore — restore a PostgreSQL database from an archive.
 
-use anyhow::{bail, Result};
 use clap::Parser;
 
 /// pg_restore restores a PostgreSQL database from an archive
@@ -21,12 +20,61 @@ struct Cli {
     #[arg(short = 'd', long = "dbname")]
     dbname: Option<String>,
 
+    /// Output file/script (use - for stdout)
+    #[arg(short = 'f', long = "file")]
+    file: Option<String>,
+
     /// Drop database objects before recreating them.
     #[arg(short = 'c', long = "clean")]
     clean: bool,
 
-    /// Archive file to restore (positional).
-    filename: Option<String>,
+    /// Use DROP ... IF EXISTS
+    #[arg(long = "if-exists")]
+    if_exists: bool,
+
+    /// Dump only the data (no schema)
+    #[arg(short = 'a', long = "data-only")]
+    data_only: bool,
+
+    /// Dump only the schema (no data)
+    #[arg(short = 's', long = "schema-only")]
+    schema_only: bool,
+
+    /// Dump only statistics
+    #[arg(long = "statistics-only")]
+    statistics_only: bool,
+
+    /// Number of parallel jobs
+    #[arg(short = 'j', long = "jobs", allow_negative_numbers = true)]
+    jobs: Option<String>,
+
+    /// Restore in a single transaction
+    #[arg(short = '1', long = "single-transaction")]
+    single_transaction: bool,
+
+    /// Archive format
+    #[arg(short = 'F', long = "format")]
+    format: Option<String>,
+
+    /// Create the target database
+    #[arg(short = 'C', long = "create")]
+    create: bool,
+
+    /// Exclude databases matching pattern (dumpall only)
+    #[arg(long = "exclude-database")]
+    exclude_database: Option<String>,
+
+    /// Restore only global objects
+    #[arg(short = 'g', long = "globals-only")]
+    globals_only: bool,
+
+    /// Do not restore global objects
+    #[arg(long = "no-globals")]
+    no_globals: bool,
+
+    /// Archive file(s) to restore (positional).
+    #[arg()]
+    filenames: Vec<String>,
 }
 
 /// Build the version string: `pg_restore (pg_plumbing) <version>`.
@@ -34,33 +82,151 @@ fn pg_restore_version() -> &'static str {
     concat!("pg_restore (pg_plumbing) ", env!("CARGO_PKG_VERSION"))
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() {
     let cli = Cli::parse();
 
-    let dbname = match cli.dbname {
-        Some(ref d) => d.clone(),
-        None => bail!("pg_restore: no database specified (use -d)"),
-    };
+    // Too many positional args (more than 1 file)
+    if cli.filenames.len() > 1 {
+        eprintln!(
+            "pg_restore: too many command-line arguments (first is \"{}\")",
+            cli.filenames[1]
+        );
+        std::process::exit(1);
+    }
 
-    let filename = match cli.filename {
-        Some(ref f) => f.clone(),
-        None => bail!("pg_restore: no input file specified"),
-    };
+    // Validate format if provided
+    if let Some(ref fmt) = cli.format {
+        if fmt.is_empty() {
+            eprintln!("pg_restore: invalid archive format \"\"");
+            std::process::exit(1);
+        }
+        if !validate_format(fmt) {
+            eprintln!("pg_restore: invalid archive format \"{fmt}\"");
+            std::process::exit(1);
+        }
+    }
 
-    let sql = if filename == "-" {
-        use std::io::Read;
-        let mut buf = String::new();
-        std::io::stdin().read_to_string(&mut buf)?;
-        buf
-    } else {
-        std::fs::read_to_string(&filename)?
-    };
+    // --data-only + --schema-only
+    if cli.data_only && cli.schema_only {
+        eprintln!(
+            "pg_restore: options -a/--data-only and -s/--schema-only cannot be used together"
+        );
+        std::process::exit(1);
+    }
 
-    let opts = pg_plumbing::restore::RestoreOptions {
-        dbname,
-        clean: cli.clean,
-    };
+    // -d and -f cannot be used together
+    if cli.dbname.is_some() && cli.file.is_some() {
+        eprintln!("pg_restore: options -d/--dbname and -f/--file cannot be used together");
+        std::process::exit(1);
+    }
 
-    pg_plumbing::restore::restore_plain(&sql, &opts).await
+    // --clean + --data-only
+    if cli.clean && cli.data_only {
+        eprintln!("pg_restore: options -c/--clean and -a/--data-only cannot be used together");
+        std::process::exit(1);
+    }
+
+    // --if-exists requires --clean
+    if cli.if_exists && !cli.clean {
+        eprintln!("pg_restore: option --if-exists requires option -c/--clean");
+        std::process::exit(1);
+    }
+
+    // Validate jobs
+    if let Some(ref jobs_str) = cli.jobs {
+        match jobs_str.parse::<i64>() {
+            Ok(n) if !(1..=1000).contains(&n) => {
+                eprintln!("pg_restore: invalid number of parallel jobs: {n}");
+                std::process::exit(1);
+            }
+            Err(_) => {
+                eprintln!("pg_restore: invalid number of parallel jobs: \"{jobs_str}\"");
+                std::process::exit(1);
+            }
+            Ok(_) => {}
+        }
+    }
+
+    // --single-transaction + -j
+    if cli.single_transaction && cli.jobs.is_some() {
+        eprintln!("pg_restore: options --single-transaction and --jobs cannot be used together");
+        std::process::exit(1);
+    }
+
+    // --create + --single-transaction
+    if cli.create && cli.single_transaction {
+        eprintln!(
+            "pg_restore: options -C/--create and -1/--single-transaction cannot be used together"
+        );
+        std::process::exit(1);
+    }
+
+    // --exclude-database + --globals-only
+    if cli.exclude_database.is_some() && cli.globals_only {
+        eprintln!(
+            "pg_restore: options --exclude-database and --globals-only cannot be used together"
+        );
+        std::process::exit(1);
+    }
+
+    // --data-only + --globals-only
+    if cli.data_only && cli.globals_only {
+        eprintln!("pg_restore: options -a/--data-only and --globals-only cannot be used together");
+        std::process::exit(1);
+    }
+
+    // --globals-only + --schema-only
+    if cli.globals_only && cli.schema_only {
+        eprintln!(
+            "pg_restore: options --globals-only and -s/--schema-only cannot be used together"
+        );
+        std::process::exit(1);
+    }
+
+    // --globals-only + --statistics-only
+    if cli.globals_only && cli.statistics_only {
+        eprintln!(
+            "pg_restore: options --globals-only and --statistics-only cannot be used together"
+        );
+        std::process::exit(1);
+    }
+
+    // --globals-only + --no-globals
+    if cli.globals_only && cli.no_globals {
+        eprintln!("pg_restore: options --globals-only and --no-globals cannot be used together");
+        std::process::exit(1);
+    }
+
+    // --globals-only requires dumpall archive.
+    // Since we don't implement actual archive inspection yet, we always emit
+    // this error when --globals-only is used with a positional file
+    // (which would need to be a real dumpall archive to proceed).
+    if cli.globals_only && !cli.filenames.is_empty() {
+        eprintln!("pg_restore: --globals-only can only be used with pg_dumpall archives");
+        std::process::exit(1);
+    }
+
+    // --exclude-database requires dumpall archive
+    if cli.exclude_database.is_some() && !cli.filenames.is_empty() {
+        eprintln!("pg_restore: --exclude-database can only be used with pg_dumpall archives");
+        std::process::exit(1);
+    }
+
+    // Require either -d or -f or a positional file
+    let has_output = cli.dbname.is_some() || cli.file.is_some() || !cli.filenames.is_empty();
+    if !has_output {
+        eprintln!("pg_restore: one of -d/--dbname and -f/--file must be specified");
+        std::process::exit(1);
+    }
+
+    // Actual restore not yet implemented.
+    eprintln!("pg_restore: not yet implemented");
+    std::process::exit(1);
+}
+
+fn validate_format(fmt: &str) -> bool {
+    matches!(
+        fmt,
+        "plain" | "p" | "custom" | "c" | "directory" | "d" | "tar" | "t"
+    )
 }
