@@ -1,7 +1,7 @@
 // Copyright 2026 pg_plumbing contributors
 // SPDX-License-Identifier: MIT
 
-//! Shared test helpers for pg_dump integration tests.
+//! Shared test helpers for pg_dump/pg_restore integration tests.
 
 use std::process::Command;
 
@@ -47,6 +47,20 @@ pub fn run_pg_dump(args: &[&str]) -> (String, String, i32) {
     (stdout, stderr, code)
 }
 
+/// Run pg_plumbing pg-restore with the given arguments.
+/// Returns (stdout, stderr, exit_code).
+pub fn run_pg_restore(args: &[&str]) -> (String, String, i32) {
+    let bin = pg_plumbing_bin();
+    let mut cmd = Command::new(&bin);
+    cmd.arg("pg-restore");
+    cmd.args(args);
+    let output = cmd.output().expect("failed to execute pg_plumbing");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let code = output.status.code().unwrap_or(-1);
+    (stdout, stderr, code)
+}
+
 /// Set up the test database schema. Idempotent.
 /// Uses OnceLock to avoid Once poisoning when setup fails.
 pub fn setup_test_schema() {
@@ -80,4 +94,126 @@ pub fn setup_test_schema() {
             String::from_utf8_lossy(&output.stderr)
         );
     });
+}
+
+/// Run a SQL command via psql against the given database.
+/// Panics on failure.
+pub fn psql(dbname: &str, sql: &str) {
+    let conninfo = test_conninfo(dbname);
+    let password = std::env::var("PGPASSWORD").unwrap_or_default();
+    let mut cmd = Command::new("psql");
+    cmd.arg(&conninfo).arg("-c").arg(sql);
+    if !password.is_empty() {
+        cmd.env("PGPASSWORD", &password);
+    }
+    let output = cmd.output().expect("psql failed");
+    assert!(
+        output.status.success(),
+        "psql command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Run a SQL query via psql and return the output (tuples-only, no alignment).
+pub fn psql_query(dbname: &str, sql: &str) -> String {
+    let conninfo = test_conninfo(dbname);
+    let password = std::env::var("PGPASSWORD").unwrap_or_default();
+    let mut cmd = Command::new("psql");
+    cmd.arg(&conninfo)
+        .arg("-tA") // tuples only, unaligned
+        .arg("-c")
+        .arg(sql);
+    if !password.is_empty() {
+        cmd.env("PGPASSWORD", &password);
+    }
+    let output = cmd.output().expect("psql query failed");
+    assert!(
+        output.status.success(),
+        "psql query failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).to_string()
+}
+
+/// Create a fresh test database. Drops it first if it exists.
+pub fn create_test_db(dbname: &str) {
+    drop_test_db(dbname);
+
+    let conninfo = test_conninfo("postgres");
+    let password = std::env::var("PGPASSWORD").unwrap_or_default();
+    let create_sql = format!("create database \"{dbname}\";");
+    let mut cmd = Command::new("psql");
+    cmd.arg(&conninfo).arg("-c").arg(&create_sql);
+    if !password.is_empty() {
+        cmd.env("PGPASSWORD", &password);
+    }
+    let output = cmd.output().expect("create database failed");
+    assert!(
+        output.status.success(),
+        "create database failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Set up a simple restore-test table (no SERIAL/sequence dependency).
+/// Uses OnceLock to avoid poisoning.
+pub fn setup_restore_test_schema() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        let conninfo = test_conninfo("postgres");
+        let password = std::env::var("PGPASSWORD").unwrap_or_default();
+        let sql = "\
+            drop table if exists dump_test_restore cascade;\n\
+            create table dump_test_restore (\n\
+                id integer not null,\n\
+                name text not null,\n\
+                value integer,\n\
+                constraint dump_test_restore_pkey primary key (id)\n\
+            );\n\
+            insert into dump_test_restore (id, name, value) values\n\
+                (1, 'alice', 10),\n\
+                (2, 'bob', 20),\n\
+                (3, 'charlie', 30);\n\
+        ";
+        let mut cmd = Command::new("psql");
+        cmd.arg(&conninfo).arg("-c").arg(sql);
+        if !password.is_empty() {
+            cmd.env("PGPASSWORD", &password);
+        }
+        let output = cmd.output().expect("psql setup_restore failed");
+        assert!(
+            output.status.success(),
+            "setup_restore failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    });
+}
+
+/// Drop a test database if it exists.
+pub fn drop_test_db(dbname: &str) {
+    let conninfo = test_conninfo("postgres");
+    let password = std::env::var("PGPASSWORD").unwrap_or_default();
+
+    // Terminate connections first.
+    let term_sql = format!(
+        "select pg_terminate_backend(pid) \
+         from pg_stat_activity \
+         where datname = '{dbname}' and pid <> pg_backend_pid();"
+    );
+    let mut cmd = Command::new("psql");
+    cmd.arg(&conninfo).arg("-c").arg(&term_sql);
+    if !password.is_empty() {
+        cmd.env("PGPASSWORD", &password);
+    }
+    let _ = cmd.output();
+
+    // Now drop.
+    let drop_sql = format!("drop database if exists \"{dbname}\";");
+    let mut cmd = Command::new("psql");
+    cmd.arg(&conninfo).arg("-c").arg(&drop_sql);
+    if !password.is_empty() {
+        cmd.env("PGPASSWORD", &password);
+    }
+    let _ = cmd.output();
 }
