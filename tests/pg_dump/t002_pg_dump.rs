@@ -424,9 +424,39 @@ fn insert_into_test_table() {
 }
 
 #[test]
-#[ignore]
 /// test_table with 4-row INSERTs (rows_per_insert mode).
-fn insert_rows_per_insert() {}
+/// Un-ignored: tests --rows-per-insert batching.
+fn insert_rows_per_insert() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&[
+        "-t",
+        "dump_test_simple",
+        "-d",
+        "postgres",
+        "--rows-per-insert=4",
+    ]);
+    assert_eq!(code, 0, "pg_dump --rows-per-insert should succeed");
+    // With 3 rows and batch size 4, all rows fit in one INSERT.
+    assert!(
+        stdout.contains("INSERT INTO public.dump_test_simple VALUES"),
+        "output should contain INSERT statement:\n{stdout}"
+    );
+    // Multiple value tuples in a single INSERT (comma-separated).
+    let insert_line = stdout
+        .lines()
+        .find(|l| l.starts_with("INSERT INTO public.dump_test_simple VALUES"))
+        .expect("should have an INSERT line");
+    let comma_count = insert_line.matches("), (").count() + insert_line.matches("),(").count();
+    assert!(
+        comma_count >= 2,
+        "expected at least 3 value tuples in one INSERT, got {} separators:\n{insert_line}",
+        comma_count
+    );
+    assert!(
+        !stdout.contains("COPY public.dump_test_simple"),
+        "output should NOT contain COPY with --rows-per-insert:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore]
@@ -1057,9 +1087,32 @@ fn run_clean() {}
 fn run_clean_if_exists() {}
 
 #[test]
-#[ignore]
 /// column_inserts: pg_dump --data-only --column-inserts.
-fn run_column_inserts() {}
+/// Un-ignored: tests --column-inserts flag.
+fn run_column_inserts() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&[
+        "-t",
+        "dump_test_simple",
+        "-d",
+        "postgres",
+        "--data-only",
+        "--column-inserts",
+    ]);
+    assert_eq!(code, 0, "pg_dump --column-inserts should succeed");
+    assert!(
+        stdout.contains("INSERT INTO public.dump_test_simple (id, name, value) VALUES"),
+        "output should contain INSERT with column names:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("CREATE TABLE"),
+        "data-only output should NOT contain CREATE TABLE:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("COPY public.dump_test_simple"),
+        "output should NOT contain COPY with --column-inserts:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore]
@@ -1158,14 +1211,64 @@ fn run_exclude_measurement() {}
 fn run_exclude_table_data() {}
 
 #[test]
-#[ignore]
 /// inserts: pg_dump --data-only --inserts.
-fn run_inserts() {}
+/// Un-ignored: tests --inserts flag with --data-only.
+fn run_inserts() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&[
+        "-t",
+        "dump_test_simple",
+        "-d",
+        "postgres",
+        "--data-only",
+        "--inserts",
+    ]);
+    assert_eq!(code, 0, "pg_dump --data-only --inserts should succeed");
+    assert!(
+        stdout.contains("INSERT INTO public.dump_test_simple VALUES"),
+        "output should contain INSERT statements:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("CREATE TABLE"),
+        "data-only output should NOT contain CREATE TABLE:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("COPY public.dump_test_simple"),
+        "output should NOT contain COPY with --inserts:\n{stdout}"
+    );
+    // Verify value quoting: strings quoted, integers unquoted, NULL as NULL.
+    assert!(
+        stdout.contains("'alice'"),
+        "string values should be single-quoted:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore]
-/// rows_per_insert: pg_dump --rows-per-insert=4 --on-conflict-do-nothing.
-fn run_rows_per_insert() {}
+/// rows_per_insert: pg_dump --rows-per-insert=4.
+/// Un-ignored: tests --rows-per-insert dump run.
+fn run_rows_per_insert() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&[
+        "-t",
+        "dump_test_simple",
+        "-d",
+        "postgres",
+        "--rows-per-insert=4",
+    ]);
+    assert_eq!(code, 0, "pg_dump --rows-per-insert should succeed");
+    assert!(
+        stdout.contains("INSERT INTO public.dump_test_simple VALUES"),
+        "output should contain INSERT statements:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("CREATE TABLE"),
+        "output should contain CREATE TABLE (not data-only):\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("COPY public.dump_test_simple"),
+        "output should NOT contain COPY with --rows-per-insert:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore]

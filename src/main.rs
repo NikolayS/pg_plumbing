@@ -140,7 +140,7 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
         tables: args.table,
         schema_only: args.schema_only,
         data_only: args.data_only,
-        inserts: args.inserts || args.column_inserts,
+        inserts: args.inserts || args.column_inserts || args.rows_per_insert.is_some(),
         column_inserts: args.column_inserts,
         rows_per_insert: args.rows_per_insert,
         schemas: args.schema,
