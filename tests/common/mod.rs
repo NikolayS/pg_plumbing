@@ -25,7 +25,12 @@ pub fn test_conninfo(dbname: &str) -> String {
     let host = std::env::var("PGHOST").unwrap_or_else(|_| "localhost".to_string());
     let port = std::env::var("PGPORT").unwrap_or_else(|_| "5432".to_string());
     let user = std::env::var("PGUSER").unwrap_or_else(|_| "postgres".to_string());
-    format!("host={host} port={port} user={user} dbname={dbname}")
+    let password = std::env::var("PGPASSWORD").unwrap_or_default();
+    if password.is_empty() {
+        format!("host={host} port={port} user={user} dbname={dbname}")
+    } else {
+        format!("host={host} port={port} user={user} password={password} dbname={dbname}")
+    }
 }
 
 /// Run pg_plumbing pg-dump with the given arguments.
@@ -43,11 +48,13 @@ pub fn run_pg_dump(args: &[&str]) -> (String, String, i32) {
 }
 
 /// Set up the test database schema. Idempotent.
+/// Uses OnceLock to avoid Once poisoning when setup fails.
 pub fn setup_test_schema() {
-    use std::sync::Once;
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
         let conninfo = test_conninfo("postgres");
+        let password = std::env::var("PGPASSWORD").unwrap_or_default();
         let sql = "\
             drop table if exists dump_test_simple cascade;\n\
             drop sequence if exists dump_test_simple_id_seq cascade;\n\
@@ -61,12 +68,12 @@ pub fn setup_test_schema() {
                 ('bob', 2),\n\
                 ('charlie', 3);\n\
         ";
-        let output = Command::new("psql")
-            .arg(&conninfo)
-            .arg("-c")
-            .arg(sql)
-            .output()
-            .expect("psql setup failed");
+        let mut cmd = Command::new("psql");
+        cmd.arg(&conninfo).arg("-c").arg(sql);
+        if !password.is_empty() {
+            cmd.env("PGPASSWORD", &password);
+        }
+        let output = cmd.output().expect("psql setup failed");
         assert!(
             output.status.success(),
             "setup failed: {}",
