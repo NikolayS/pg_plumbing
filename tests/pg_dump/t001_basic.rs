@@ -12,16 +12,37 @@
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // RED — not yet implemented
 /// pg_dump --help exits 0 and prints usage info.
 /// Source: program_help_ok('pg_dump')
-fn pg_dump_help() {}
+fn pg_dump_help() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_pg_dump"))
+        .arg("--help")
+        .output()
+        .expect("failed to run pg_dump");
+    assert!(output.status.success(), "pg_dump --help should exit 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("pg_dump"),
+        "help output should mention pg_dump"
+    );
+    assert!(stdout.contains("Usage"), "help output should contain Usage");
+}
 
 #[test]
-#[ignore]
 /// pg_dump --version exits 0 and prints version string.
 /// Source: program_version_ok('pg_dump')
-fn pg_dump_version() {}
+fn pg_dump_version() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_pg_dump"))
+        .arg("--version")
+        .output()
+        .expect("failed to run pg_dump");
+    assert!(output.status.success(), "pg_dump --version should exit 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("pg_dump (pg_plumbing)"),
+        "version output should contain 'pg_dump (pg_plumbing)'"
+    );
+}
 
 #[test]
 #[ignore]
@@ -30,16 +51,40 @@ fn pg_dump_version() {}
 fn pg_dump_options_handling() {}
 
 #[test]
-#[ignore]
 /// pg_restore --help exits 0 and prints usage info.
 /// Source: program_help_ok('pg_restore')
-fn pg_restore_help() {}
+fn pg_restore_help() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_pg_restore"))
+        .arg("--help")
+        .output()
+        .expect("failed to run pg_restore");
+    assert!(output.status.success(), "pg_restore --help should exit 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("pg_restore"),
+        "help output should mention pg_restore"
+    );
+    assert!(stdout.contains("Usage"), "help output should contain Usage");
+}
 
 #[test]
-#[ignore]
 /// pg_restore --version exits 0 and prints version string.
 /// Source: program_version_ok('pg_restore')
-fn pg_restore_version() {}
+fn pg_restore_version() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_pg_restore"))
+        .arg("--version")
+        .output()
+        .expect("failed to run pg_restore");
+    assert!(
+        output.status.success(),
+        "pg_restore --version should exit 0"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("pg_restore (pg_plumbing)"),
+        "version output should contain 'pg_restore (pg_plumbing)'"
+    );
+}
 
 #[test]
 #[ignore]

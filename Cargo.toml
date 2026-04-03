@@ -13,4 +13,16 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
 
+[[bin]]
+name = "pg_dump"
+path = "src/bin/pg_dump.rs"
+
+[[bin]]
+name = "pg_restore"
+path = "src/bin/pg_restore.rs"
+
+[[bin]]
+name = "pg_plumbing"
+path = "src/main.rs"
+
 [dev-dependencies]
