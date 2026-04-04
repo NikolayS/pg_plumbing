@@ -124,7 +124,9 @@ fn main() {
 
     // --clean + --data-only
     if cli.clean && cli.data_only {
-        eprintln!("pg_dumpall: error: options -c/--clean and -a/--data-only cannot be used together");
+        eprintln!(
+            "pg_dumpall: error: options -c/--clean and -a/--data-only cannot be used together"
+        );
         std::process::exit(1);
     }
 
@@ -168,13 +170,17 @@ fn main() {
 
     // --data-only + --no-data
     if cli.data_only && cli.no_data {
-        eprintln!("pg_dumpall: error: options -a/--data-only and --no-data cannot be used together");
+        eprintln!(
+            "pg_dumpall: error: options -a/--data-only and --no-data cannot be used together"
+        );
         std::process::exit(1);
     }
 
     // --schema-only + --no-schema
     if cli.schema_only && cli.no_schema {
-        eprintln!("pg_dumpall: error: options -s/--schema-only and --no-schema cannot be used together");
+        eprintln!(
+            "pg_dumpall: error: options -s/--schema-only and --no-schema cannot be used together"
+        );
         std::process::exit(1);
     }
 
@@ -188,7 +194,9 @@ fn main() {
 
     // --statistics + --no-statistics
     if cli.statistics && cli.no_statistics {
-        eprintln!("pg_dumpall: error: options --statistics and --no-statistics cannot be used together");
+        eprintln!(
+            "pg_dumpall: error: options --statistics and --no-statistics cannot be used together"
+        );
         std::process::exit(1);
     }
 

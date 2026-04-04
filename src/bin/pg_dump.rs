@@ -61,7 +61,7 @@ struct Cli {
     if_exists: bool,
 
     /// Number of parallel jobs for directory format
-    #[arg(short = 'j', long = "jobs", allow_negative_numbers = true)]
+    #[arg(short = 'j', long = "jobs", allow_hyphen_values = true)]
     jobs: Option<String>,
 
     /// Compression specification (algorithm[:level] or just level)
@@ -125,7 +125,9 @@ fn main() {
 
     // --schema-only + --data-only
     if cli.schema_only && cli.data_only {
-        eprintln!("pg_dump: error: options -s/--schema-only and -a/--data-only cannot be used together");
+        eprintln!(
+            "pg_dump: error: options -s/--schema-only and -a/--data-only cannot be used together"
+        );
         std::process::exit(1);
     }
 
@@ -139,13 +141,17 @@ fn main() {
 
     // --data-only + --statistics-only
     if cli.data_only && cli.statistics_only {
-        eprintln!("pg_dump: error: options -a/--data-only and --statistics-only cannot be used together");
+        eprintln!(
+            "pg_dump: error: options -a/--data-only and --statistics-only cannot be used together"
+        );
         std::process::exit(1);
     }
 
     // --statistics-only + --no-statistics
     if cli.statistics_only && cli.no_statistics {
-        eprintln!("pg_dump: error: options --statistics-only and --no-statistics cannot be used together");
+        eprintln!(
+            "pg_dump: error: options --statistics-only and --no-statistics cannot be used together"
+        );
         std::process::exit(1);
     }
 
@@ -159,7 +165,9 @@ fn main() {
 
     // --include-foreign-data + -j
     if cli.include_foreign_data.is_some() && cli.jobs.is_some() {
-        eprintln!("pg_dump: error: option --include-foreign-data is not supported with parallel backup");
+        eprintln!(
+            "pg_dump: error: option --include-foreign-data is not supported with parallel backup"
+        );
         std::process::exit(1);
     }
 
@@ -392,7 +400,9 @@ fn validate_compress(compress_str: &str, format_str: &str) {
             if let Some(lvl) = level_str {
                 match lvl.parse::<i64>() {
                     Ok(n) if n > 0 => {
-                        eprintln!("pg_dump: error: compression is not supported by tar archive format");
+                        eprintln!(
+                            "pg_dump: error: compression is not supported by tar archive format"
+                        );
                         std::process::exit(1);
                     }
                     _ => {}
@@ -422,7 +432,9 @@ fn validate_compress(compress_str: &str, format_str: &str) {
             if is_tar {
                 match lvl.parse::<i64>() {
                     Ok(n) if n > 0 => {
-                        eprintln!("pg_dump: error: compression is not supported by tar archive format");
+                        eprintln!(
+                            "pg_dump: error: compression is not supported by tar archive format"
+                        );
                         std::process::exit(1);
                     }
                     _ => {}

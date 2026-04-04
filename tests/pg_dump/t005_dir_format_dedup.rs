@@ -88,7 +88,9 @@ fn run_psql(conninfo: &str, password: &str, sql: &str, label: &str) {
     if !password.is_empty() {
         cmd.env("PGPASSWORD", password);
     }
-    let output = cmd.output().unwrap_or_else(|e| panic!("psql for {label} failed to spawn: {e}"));
+    let output = cmd
+        .output()
+        .unwrap_or_else(|e| panic!("psql for {label} failed to spawn: {e}"));
     assert!(
         output.status.success(),
         "{label} failed: {}",

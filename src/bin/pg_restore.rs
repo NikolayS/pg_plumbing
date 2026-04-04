@@ -102,7 +102,7 @@ fn main() {
             std::process::exit(1);
         }
         if !validate_format(fmt) {
-            eprintln!("pg_restore: error: unrecognized archive format \"{fmt}\"");
+            eprintln!("pg_restore: error: unrecognized archive format \"{fmt}\";");
             std::process::exit(1);
         }
     }
@@ -123,7 +123,9 @@ fn main() {
 
     // --clean + --data-only
     if cli.clean && cli.data_only {
-        eprintln!("pg_restore: error: options -c/--clean and -a/--data-only cannot be used together");
+        eprintln!(
+            "pg_restore: error: options -c/--clean and -a/--data-only cannot be used together"
+        );
         std::process::exit(1);
     }
 
@@ -172,7 +174,9 @@ fn main() {
 
     // --data-only + --globals-only
     if cli.data_only && cli.globals_only {
-        eprintln!("pg_restore: error: options -a/--data-only and --globals-only cannot be used together");
+        eprintln!(
+            "pg_restore: error: options -a/--data-only and --globals-only cannot be used together"
+        );
         std::process::exit(1);
     }
 
@@ -194,7 +198,9 @@ fn main() {
 
     // --globals-only + --no-globals
     if cli.globals_only && cli.no_globals {
-        eprintln!("pg_restore: error: options --globals-only and --no-globals cannot be used together");
+        eprintln!(
+            "pg_restore: error: options --globals-only and --no-globals cannot be used together"
+        );
         std::process::exit(1);
     }
 
@@ -209,7 +215,9 @@ fn main() {
 
     // --exclude-database requires dumpall archive
     if cli.exclude_database.is_some() && !cli.filenames.is_empty() {
-        eprintln!("pg_restore: error: --exclude-database can only be used with pg_dumpall archives");
+        eprintln!(
+            "pg_restore: error: --exclude-database can only be used with pg_dumpall archives"
+        );
         std::process::exit(1);
     }
 
