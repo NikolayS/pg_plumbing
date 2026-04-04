@@ -102,6 +102,18 @@ pub struct PgDumpArgs {
     #[arg(short = 'C', long = "create")]
     create_db: bool,
 
+    /// Do not dump large objects.
+    #[arg(long = "no-large-objects")]
+    no_large_objects: bool,
+
+    /// Dump large objects even when a schema filter is active.
+    #[arg(short = 'b', long = "large-objects")]
+    large_objects: bool,
+
+    /// Do not dump row-level security policies.
+    #[arg(long = "no-policies")]
+    no_policies: bool,
+
     /// Positional database name (alternative to -d).
     #[arg()]
     database: Option<String>,
@@ -188,6 +200,9 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
         clean: args.clean,
         if_exists: args.if_exists,
         create_db: args.create_db,
+        no_large_objects: args.no_large_objects,
+        large_objects: args.large_objects,
+        no_policies: args.no_policies,
     };
 
     match args.format {

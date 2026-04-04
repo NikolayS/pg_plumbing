@@ -33,6 +33,10 @@ pub struct TableInfo {
     pub parent_table: Option<String>,
     /// Schema of the parent partitioned table — Some for partition children.
     pub parent_schema: Option<String>,
+    /// Whether row-level security is enabled on this table.
+    pub rls_enabled: bool,
+    /// Index name marked for CLUSTER ON, if any.
+    pub cluster_index: Option<String>,
 }
 
 /// Metadata for a single column.
@@ -46,6 +50,12 @@ pub struct ColumnInfo {
     pub not_null: bool,
     /// Default expression, if any.
     pub default_expr: Option<String>,
+    /// Custom statistics target: Some(n) if explicitly set (n≥0); None = use system default.
+    pub statistics: Option<i32>,
+    /// Storage override: Some('p'/'e'/'x'/'m') when different from the type default.
+    pub storage_override: Option<char>,
+    /// Column-level `n_distinct` option from `attoptions`, if set.
+    pub n_distinct: Option<f64>,
 }
 
 /// Metadata for a constraint.
@@ -168,7 +178,13 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
                          JOIN pg_catalog.pg_class p ON p.oid = i.inhparent
                          JOIN pg_catalog.pg_namespace pn ON pn.oid = p.relnamespace
                          WHERE i.inhrelid = c.oid
-                         LIMIT 1) AS parent_schema
+                         LIMIT 1) AS parent_schema,
+                        c.relrowsecurity,
+                        (SELECT ci.relname
+                         FROM pg_catalog.pg_index idx
+                         JOIN pg_catalog.pg_class ci ON ci.oid = idx.indexrelid
+                         WHERE idx.indrelid = c.oid AND idx.indisclustered = true
+                         LIMIT 1) AS cluster_index
                  from pg_catalog.pg_class c
                  join pg_catalog.pg_namespace n on n.oid = c.relnamespace
                  join pg_catalog.pg_roles r on r.oid = c.relowner
@@ -207,7 +223,13 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
                              JOIN pg_catalog.pg_class p ON p.oid = i.inhparent
                              JOIN pg_catalog.pg_namespace pn ON pn.oid = p.relnamespace
                              WHERE i.inhrelid = c.oid
-                             LIMIT 1) AS parent_schema
+                             LIMIT 1) AS parent_schema,
+                            c.relrowsecurity,
+                            (SELECT ci.relname
+                             FROM pg_catalog.pg_index idx
+                             JOIN pg_catalog.pg_class ci ON ci.oid = idx.indexrelid
+                             WHERE idx.indrelid = c.oid AND idx.indisclustered = true
+                             LIMIT 1) AS cluster_index
                      from pg_catalog.pg_class c
                      join pg_catalog.pg_namespace n
                        on n.oid = c.relnamespace
@@ -236,6 +258,8 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
         let partition_bound: Option<String> = row.get("partition_bound");
         let parent_table: Option<String> = row.get("parent_table");
         let parent_schema: Option<String> = row.get("parent_schema");
+        let rls_enabled: bool = row.get("relrowsecurity");
+        let cluster_index: Option<String> = row.get("cluster_index");
 
         // Schema inclusion filter (supports glob patterns).
         if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
@@ -268,6 +292,8 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
             partition_bound: partition_bound.filter(|s| !s.is_empty()),
             parent_table,
             parent_schema,
+            rls_enabled,
+            cluster_index,
         });
     }
 
@@ -606,10 +632,15 @@ async fn get_columns(client: &Client, table_oid: u32) -> Result<Vec<ColumnInfo>>
             "select a.attname, \
                     pg_catalog.format_type(a.atttypid, a.atttypmod) as type_name, \
                     a.attnotnull, \
-                    pg_catalog.pg_get_expr(d.adbin, d.adrelid) as default_expr \
+                    pg_catalog.pg_get_expr(d.adbin, d.adrelid) as default_expr, \
+                    a.attstattarget::int4 as attstattarget, \
+                    a.attstorage::text as attstorage, \
+                    t.typstorage::text as typstorage, \
+                    COALESCE(array_to_string(a.attoptions, ','), '') as attoptions \
              from pg_catalog.pg_attribute a \
              left join pg_catalog.pg_attrdef d \
                on d.adrelid = a.attrelid and d.adnum = a.attnum \
+             join pg_catalog.pg_type t on t.oid = a.atttypid \
              where a.attrelid = $1::bigint::oid \
                and a.attnum > 0 \
                and not a.attisdropped \
@@ -621,14 +652,50 @@ async fn get_columns(client: &Client, table_oid: u32) -> Result<Vec<ColumnInfo>>
 
     let mut columns = Vec::new();
     for row in &rows {
+        let attstattarget: Option<i32> = row.get("attstattarget");
+        let attstorage: &str = row.get("attstorage");
+        let typstorage: &str = row.get("typstorage");
+        let attoptions: &str = row.get("attoptions");
+
+        // Determine storage override: only emit if different from type default.
+        let storage_override = if attstorage != typstorage {
+            attstorage.chars().next()
+        } else {
+            None
+        };
+
+        // Parse n_distinct from attoptions (e.g. "n_distinct=5,n_distinct_inherited=5").
+        let n_distinct = parse_n_distinct(attoptions);
+
+        // attstattarget = -1 means "use the system default" — treat as None so we
+        // don't emit a spurious `SET STATISTICS -1` statement.  Only Some(n) with
+        // n >= 0 represents a value explicitly set by the user.
+        let statistics = match attstattarget {
+            Some(n) if n >= 0 => Some(n),
+            _ => None,
+        };
+
         columns.push(ColumnInfo {
             name: row.get("attname"),
             type_name: row.get("type_name"),
             not_null: row.get("attnotnull"),
             default_expr: row.get("default_expr"),
+            statistics, // Some(n≥0) if explicitly set by user, None = system default
+            storage_override,
+            n_distinct,
         });
     }
     Ok(columns)
+}
+
+/// Parse the `n_distinct` value from a comma-separated `attoptions` string.
+fn parse_n_distinct(attoptions: &str) -> Option<f64> {
+    for part in attoptions.split(',') {
+        if let Some(val_str) = part.strip_prefix("n_distinct=") {
+            return val_str.parse::<f64>().ok();
+        }
+    }
+    None
 }
 
 /// Query all constraints for a table by OID.
@@ -1634,6 +1701,146 @@ pub async fn get_publications(client: &Client) -> Result<Vec<PublicationInfo>> {
     }
 
     Ok(publications)
+}
+
+/// Metadata for a large object.
+#[derive(Debug, Clone)]
+pub struct LargeObjectInfo {
+    /// The large object OID.
+    pub oid: u32,
+    /// Owner role name.
+    pub owner: String,
+    /// Comment text, if any.
+    pub comment: Option<String>,
+    /// Raw ACL string (comma-separated aclitem entries), or empty.
+    pub acl: String,
+    /// Hex-encoded binary content of the large object.
+    pub hex_data: String,
+}
+
+/// Query large objects from the catalog, including their data.
+pub async fn get_large_objects(client: &Client) -> Result<Vec<LargeObjectInfo>> {
+    let rows = client
+        .query(
+            "SELECT lm.oid::bigint AS lo_oid,
+                    r.rolname AS owner,
+                    d.description AS comment,
+                    COALESCE(array_to_string(lm.lomacl, ','), '') AS acl_str,
+                    COALESCE(encode(lo_get(lm.oid), 'hex'), '') AS hex_data
+             FROM pg_catalog.pg_largeobject_metadata lm
+             JOIN pg_catalog.pg_roles r ON r.oid = lm.lomowner
+             LEFT JOIN pg_catalog.pg_description d
+               ON d.objoid = lm.oid
+              AND d.classoid = 'pg_catalog.pg_largeobject'::regclass
+             ORDER BY lm.oid",
+            &[],
+        )
+        .await
+        .context("query large objects")?;
+
+    let mut los = Vec::new();
+    for row in &rows {
+        let oid: i64 = row.get("lo_oid");
+        los.push(LargeObjectInfo {
+            oid: oid as u32,
+            owner: row.get::<_, &str>("owner").to_string(),
+            comment: row.get("comment"),
+            acl: row.get::<_, &str>("acl_str").to_string(),
+            hex_data: row.get::<_, &str>("hex_data").to_string(),
+        });
+    }
+    Ok(los)
+}
+
+/// Metadata for a row-level security policy.
+#[derive(Debug, Clone)]
+pub struct PolicyInfo {
+    /// Schema of the table the policy is on.
+    pub table_schema: String,
+    /// Table name the policy is on.
+    pub table_name: String,
+    /// Policy name.
+    pub name: String,
+    /// Command: ALL, SELECT, INSERT, UPDATE, DELETE.
+    pub command: String,
+    /// true = PERMISSIVE (default), false = RESTRICTIVE.
+    pub permissive: bool,
+    /// USING expression, if any.
+    pub using_expr: Option<String>,
+    /// WITH CHECK expression, if any.
+    pub check_expr: Option<String>,
+    /// Roles this policy applies to (empty means all roles / no TO clause).
+    pub roles: Vec<String>,
+    /// Comment on this policy, if any.
+    pub comment: Option<String>,
+}
+
+/// Query row-level security policies from the catalog.
+pub async fn get_policies(client: &Client, opts: &DumpOptions) -> Result<Vec<PolicyInfo>> {
+    let rows = client
+        .query(
+            "SELECT n.nspname AS table_schema,
+                    c.relname AS table_name,
+                    p.polname AS policy_name,
+                    CASE p.polcmd::text
+                        WHEN 'r' THEN 'SELECT'
+                        WHEN 'a' THEN 'INSERT'
+                        WHEN 'w' THEN 'UPDATE'
+                        WHEN 'd' THEN 'DELETE'
+                        ELSE 'ALL'
+                    END AS command,
+                    p.polpermissive AS permissive,
+                    pg_catalog.pg_get_expr(p.polqual, p.polrelid) AS using_expr,
+                    pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) AS check_expr,
+                    ARRAY(
+                        SELECT r.rolname
+                        FROM pg_catalog.pg_roles r
+                        WHERE r.oid = ANY(p.polroles) AND r.oid != 0
+                        ORDER BY r.rolname
+                    ) AS roles,
+                    d.description AS comment
+             FROM pg_catalog.pg_policy p
+             JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             LEFT JOIN pg_catalog.pg_description d
+               ON d.objoid = p.oid
+              AND d.classoid = 'pg_catalog.pg_policy'::regclass
+             WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+             ORDER BY n.nspname, c.relname, p.polname",
+            &[],
+        )
+        .await
+        .context("query policies")?;
+
+    let mut policies = Vec::new();
+    for row in &rows {
+        let table_schema: &str = row.get("table_schema");
+
+        // Apply schema filters.
+        if !opts.schemas.is_empty()
+            && !super::filter::schema_matches_any(&opts.schemas, table_schema)
+        {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, table_schema) {
+            continue;
+        }
+
+        let roles: Vec<String> = row.get("roles");
+
+        policies.push(PolicyInfo {
+            table_schema: table_schema.to_string(),
+            table_name: row.get::<_, &str>("table_name").to_string(),
+            name: row.get::<_, &str>("policy_name").to_string(),
+            command: row.get::<_, &str>("command").to_string(),
+            permissive: row.get("permissive"),
+            using_expr: row.get("using_expr"),
+            check_expr: row.get("check_expr"),
+            roles,
+            comment: row.get("comment"),
+        });
+    }
+    Ok(policies)
 }
 
 /// Quote an SQL identifier if it needs quoting.
