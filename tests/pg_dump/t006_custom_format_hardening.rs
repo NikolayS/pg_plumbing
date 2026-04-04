@@ -5,7 +5,9 @@
 //! 1. i32 overflow guard in write_data_block for large compressed data.
 //! 2. End-of-data marker validation in read_next_data_block.
 
-use pg_plumbing::dump::custom_format::{read_next_data_block, write_data_block, BLK_DATA, BLK_EOF};
+use pg_plumbing::dump::custom_format::{
+    read_next_data_block, write_data_block, write_data_block_compressed, BLK_DATA, BLK_EOF,
+};
 use std::io::Cursor;
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -13,20 +15,42 @@ use std::io::Cursor;
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// write_data_block must return an error when the compressed output would
-/// exceed i32::MAX bytes (instead of silently wrapping the cast).
+/// exceed i32::MAX bytes.
 ///
-/// We verify the same checked-cast logic that write_data_block now uses,
-/// confirming i32::try_from properly rejects oversized lengths.
+/// We call `write_data_block_compressed` — the inner function that owns the
+/// overflow guard — with a fake pre-"compressed" slice whose length is
+/// i32::MAX + 1.  This avoids allocating >2 GB while still exercising the
+/// exact `i32::try_from` check in production code.
+///
+/// This test **will fail** if the guard is removed from
+/// `write_data_block_compressed`.
 #[test]
 fn write_data_block_len_overflow_returns_error() {
-    // Verify that i32::try_from correctly rejects values > i32::MAX.
-    // This is the same checked-cast logic now used inside write_data_block.
-    let oversized: usize = (i32::MAX as usize) + 1;
-    let result = i32::try_from(oversized);
+    // Build a 1-byte backing buffer and reinterpret its length via a raw-slice
+    // fat pointer so we never allocate >2 GB.  The writer is a sink — it will
+    // error before any bytes are written because the overflow check runs first.
+    let backing = [0u8; 1];
+    let oversized_len = (i32::MAX as usize) + 1;
+    // SAFETY: we construct a slice header with a fake length. The overflow
+    // guard in write_data_block_compressed checks `compressed.len()` before
+    // doing any memory access into the slice, so the backing store is never
+    // read beyond its real size.
+    let oversized: &[u8] = unsafe { std::slice::from_raw_parts(backing.as_ptr(), oversized_len) };
+
+    let mut sink = Vec::new();
+    let result = write_data_block_compressed(&mut sink, 1, oversized);
     assert!(
         result.is_err(),
-        "i32::try_from on oversized len must fail — sanity check for the guard logic"
+        "write_data_block_compressed must error when compressed len > i32::MAX"
     );
+    let err = result.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("i32::MAX") || msg.contains("exceeds"),
+        "error message should mention the overflow, got: {err}"
+    );
+    // The writer must not have been touched (guard fires before any write).
+    assert!(sink.is_empty(), "no bytes must be written on overflow");
 }
 
 /// write_data_block succeeds for normal-sized data and round-trips correctly.
@@ -48,20 +72,26 @@ fn write_data_block_normal_data_roundtrips() {
     assert_eq!(decompressed, data);
 }
 
-/// write_data_block with empty data still writes a valid block (size=0 path).
+/// write_data_block with empty data still writes a valid block.
+/// Note: zlib output for empty input is ~8 bytes (not size=0), so the
+/// compressed_size field in the block is positive.
 #[test]
 fn write_data_block_empty_data_roundtrips() {
     let mut buf = Vec::new();
     write_data_block(&mut buf, 7, b"").expect("write_data_block must succeed for empty data");
 
     let mut cursor = Cursor::new(&buf);
-    // No error must be raised reading an empty-data block.
     let result = read_next_data_block(&mut cursor);
     assert!(
         result.is_ok(),
         "empty block must not produce an error: {:?}",
         result
     );
+    let block = result
+        .unwrap()
+        .expect("must return Some for an empty-data block");
+    assert_eq!(block.0, 7, "dump_id must round-trip");
+    assert!(block.1.is_empty(), "decompressed data must be empty");
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -140,6 +170,39 @@ fn read_next_data_block_nonzero_marker_size_returns_error() {
             || msg.contains("size")
             || msg.contains("truncat"),
         "error message should describe the problem, got: {err}"
+    );
+}
+
+/// A corrupt archive where the end-of-data marker dump_id mismatches the
+/// block dump_id must return an error (spliced-archive detection).
+#[test]
+fn read_next_data_block_mismatched_marker_id_returns_error() {
+    let mut buf = make_valid_block(10, b"hello world");
+
+    // End-of-data marker layout (last 11 bytes):
+    //   offset 0:   BLK_DATA
+    //   offset 1-5: write_int(dump_id=10)
+    //   offset 6-10: write_int(0)
+    let marker_start = buf.len() - 11;
+
+    // Overwrite the marker dump_id (bytes 1-5) with write_int(99).
+    let id_offset = marker_start + 1;
+    buf[id_offset] = 1u8; // sign = positive
+    let val_bytes = 99u32.to_le_bytes();
+    buf[id_offset + 1..id_offset + 5].copy_from_slice(&val_bytes);
+
+    let mut cursor = Cursor::new(&buf);
+    let result = read_next_data_block(&mut cursor);
+    assert!(
+        result.is_err(),
+        "mismatched marker dump_id must return an error, got: {:?}",
+        result
+    );
+    let err = result.unwrap_err();
+    let msg = err.to_string().to_lowercase();
+    assert!(
+        msg.contains("marker") || msg.contains("corrupt") || msg.contains("dump_id"),
+        "error message should describe the mismatch, got: {err}"
     );
 }
 
