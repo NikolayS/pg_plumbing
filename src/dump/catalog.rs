@@ -2486,26 +2486,43 @@ pub async fn get_collations(client: &Client, opts: &DumpOptions) -> Result<Vec<C
         .collect();
     excluded.extend(literal_excludes);
 
-    let rows = client
-        .query(
-            "SELECT c.collname,
-                    r.rolname AS owner,
-                    c.collprovider::text AS provider,
-                    COALESCE(c.colllocale, '') AS locale,
-                    COALESCE(c.collcollate, '') AS lc_collate,
-                    COALESCE(c.collctype, '') AS lc_ctype,
-                    n.nspname,
-                    d.description AS comment
-             FROM pg_catalog.pg_collation c
-             JOIN pg_catalog.pg_namespace n ON n.oid = c.collnamespace
-             JOIN pg_catalog.pg_roles r ON r.oid = c.collowner
-             LEFT JOIN pg_catalog.pg_description d
-               ON d.objoid = c.oid
-              AND d.classoid = 'pg_catalog.pg_collation'::regclass
-             WHERE n.nspname != all($1)
-             ORDER BY c.collname",
-            &[&excluded],
+    // PG 17+ unified the locale column into `colllocale`; PG 16 and earlier
+    // used `colliculocale` for ICU collations.
+    let version_row = client
+        .query_one(
+            "SELECT current_setting('server_version_num')::int AS v",
+            &[],
         )
+        .await
+        .context("query server version")?;
+    let version_num: i32 = version_row.get("v");
+    let locale_expr = if version_num >= 170000 {
+        "COALESCE(c.colllocale, '')"
+    } else {
+        "COALESCE(c.colliculocale, '')"
+    };
+
+    let sql = format!(
+        "SELECT c.collname,
+                r.rolname AS owner,
+                c.collprovider::text AS provider,
+                {locale_expr} AS locale,
+                COALESCE(c.collcollate, '') AS lc_collate,
+                COALESCE(c.collctype, '') AS lc_ctype,
+                n.nspname,
+                d.description AS comment
+         FROM pg_catalog.pg_collation c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.collnamespace
+         JOIN pg_catalog.pg_roles r ON r.oid = c.collowner
+         LEFT JOIN pg_catalog.pg_description d
+           ON d.objoid = c.oid
+          AND d.classoid = 'pg_catalog.pg_collation'::regclass
+         WHERE n.nspname != all($1)
+         ORDER BY c.collname"
+    );
+
+    let rows = client
+        .query(sql.as_str(), &[&excluded])
         .await
         .context("query collations")?;
 
