@@ -354,10 +354,23 @@ pub async fn restore_plain(sql: &str, opts: &RestoreOptions) -> Result<()> {
 
     if opts.clean {
         let drop_stmts = generate_drop_statements(sql, opts.if_exists);
-        if !drop_stmts.is_empty() {
-            // Ignore errors — objects may not exist yet (the most common case).
-            // This matches pg_restore --clean behavior for plain format.
-            let _ = client.batch_execute(&drop_stmts).await;
+        // Execute each DROP statement individually.
+        // Only suppress errors that indicate the object doesn't exist — this
+        // matches real pg_restore --clean behavior: other errors (e.g. permission
+        // denied) are still reported.
+        for stmt in drop_stmts.lines() {
+            let stmt = stmt.trim();
+            if stmt.is_empty() {
+                continue;
+            }
+            if let Err(e) = client.batch_execute(stmt).await {
+                let msg = e.to_string();
+                if !msg.contains("does not exist") {
+                    return Err(anyhow::anyhow!("failed to execute DROP: {e}").into());
+                }
+                // "does not exist" errors are expected and silently ignored,
+                // just like real pg_restore --clean.
+            }
         }
     }
 

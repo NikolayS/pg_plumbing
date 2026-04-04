@@ -73,10 +73,37 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     out.push_str("-- PostgreSQL database dump\n");
     out.push_str("--\n\n");
 
-    // --create: emit CREATE DATABASE + \connect before SET commands
+    // --create: emit CREATE DATABASE + \connect before SET commands.
+    // Include ENCODING, LC_COLLATE, LC_CTYPE from pg_database if available.
     if opts.create_db {
         let dbname = &opts.dbname;
-        out.push_str(&format!("CREATE DATABASE \"{dbname}\";\n"));
+        // Query encoding and locale settings from the catalog.
+        let db_info = client
+            .query_opt(
+                "SELECT pg_encoding_to_char(encoding) AS encoding, \
+                        datcollate, datctype \
+                 FROM pg_catalog.pg_database \
+                 WHERE datname = $1",
+                &[dbname],
+            )
+            .await
+            .ok()
+            .flatten();
+
+        if let Some(row) = db_info {
+            let encoding: &str = row.get("encoding");
+            let collate: &str = row.get("datcollate");
+            let ctype: &str = row.get("datctype");
+            out.push_str(&format!(
+                "CREATE DATABASE \"{dbname}\" WITH ENCODING = '{encoding}' LC_COLLATE = '{collate}' LC_CTYPE = '{ctype}';\n"
+            ));
+        } else {
+            // Encoding/locale info not available — use defaults.
+            // NOTE: the created database will inherit server defaults for
+            // ENCODING, LC_COLLATE, and LC_CTYPE. For a faithful restore,
+            // ensure the target server uses matching locale settings.
+            out.push_str(&format!("CREATE DATABASE \"{dbname}\";\n"));
+        }
         out.push_str(&format!("\\connect \"{dbname}\"\n\n"));
     }
 

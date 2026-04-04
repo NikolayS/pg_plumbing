@@ -214,6 +214,11 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
 }
 
 async fn run_pg_restore(args: PgRestoreArgs) -> Result<()> {
+    // --if-exists requires --clean
+    if args.if_exists && !args.clean {
+        bail!("pg_restore: error: option --if-exists requires option -c/--clean");
+    }
+
     let dbname = match args.dbname {
         Some(ref d) => d.clone(),
         None => bail!("pg_restore: no database specified (use -d)"),
