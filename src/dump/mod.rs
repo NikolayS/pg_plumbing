@@ -226,6 +226,17 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
         }
     }
 
+    // Emit COMMENT ON statements.
+    if !opts.data_only && !table_filter_active {
+        let comments = catalog::get_comments(&client, opts)
+            .await
+            .context("failed to query comments")?;
+        if !comments.is_empty() {
+            format::write_comments(&mut out, &comments);
+            out.push('\n');
+        }
+    }
+
     out.push_str("--\n");
     out.push_str("-- PostgreSQL database dump complete\n");
     out.push_str("--\n\n");

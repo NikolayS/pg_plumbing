@@ -307,19 +307,44 @@ fn comment_on_database() {}
 fn comment_on_extension() {}
 
 #[test]
-#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON SCHEMA public / COMMENT ON SCHEMA public IS NULL.
-fn comment_on_schema_public() {}
+fn comment_on_schema_public() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("COMMENT ON SCHEMA public"),
+        "output should contain COMMENT ON SCHEMA public:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON TABLE dump_test.test_table.
-fn comment_on_table() {}
+fn comment_on_table() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("COMMENT ON TABLE"),
+        "output should contain COMMENT ON TABLE:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("dump_test_simple"),
+        "COMMENT ON TABLE should reference dump_test_simple:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON COLUMN dump_test.test_table.col1.
-fn comment_on_column() {}
+fn comment_on_column() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("COMMENT ON COLUMN"),
+        "output should contain COMMENT ON COLUMN:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: COMMENT ON not emitted in dump output
