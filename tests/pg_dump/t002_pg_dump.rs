@@ -25,13 +25,13 @@
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not applicable: \restrict is a PostgreSQL TAP-test internal marker, not emitted by pg_plumbing
 /// Every dump output must contain a `\restrict` command.
 /// Source: 'restrict' => { all_runs => 1, regexp => qr/^\restrict .../ }
 fn restrict_command_present() {}
 
 #[test]
-#[ignore]
+#[ignore] // not applicable: \unrestrict is a PostgreSQL TAP-test internal marker, not emitted by pg_plumbing
 /// Every dump output must contain an `\unrestrict` command.
 /// Source: 'unrestrict' => { all_runs => 1, regexp => qr/^\unrestrict .../ }
 fn unrestrict_command_present() {}
@@ -41,19 +41,19 @@ fn unrestrict_command_present() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: ALTER DEFAULT PRIVILEGES not emitted in dump output
 /// ALTER DEFAULT PRIVILEGES FOR ROLE ... GRANT SELECT ON TABLES appears
 /// in full runs and dump_test_schema runs but not in no_privs or
 /// exclude_dump_test_schema.
 fn alter_default_privileges_grant() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: ALTER DEFAULT PRIVILEGES not emitted in dump output
 /// ALTER DEFAULT PRIVILEGES FOR ROLE ... REVOKE appears correctly.
 fn alter_default_privileges_revoke() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: pg_dumpall required for ALTER ROLE
 /// ALTER ROLE regress_dump_test_role is dumped in globals dumps.
 fn alter_role() {}
 
@@ -62,67 +62,67 @@ fn alter_role() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted in dump output + needs collation object
 /// ALTER COLLATION test0 OWNER TO appears in full runs, not in no_owner.
 fn alter_collation_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted + needs FDW object
 /// ALTER FOREIGN DATA WRAPPER dummy OWNER TO.
 fn alter_fdw_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted + needs foreign server
 /// ALTER SERVER s1 OWNER TO.
 fn alter_server_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted + needs PL function
 /// ALTER FUNCTION dump_test.pltestlang_call_handler() OWNER TO.
 fn alter_function_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted + needs operator family
 /// ALTER OPERATOR FAMILY dump_test.op_family OWNER TO.
 fn alter_operator_family_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted + needs operator class
 /// ALTER OPERATOR CLASS dump_test.op_class OWNER TO.
 fn alter_operator_class_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted + needs publication
 /// ALTER PUBLICATION pub1 OWNER TO.
 fn alter_publication_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted + needs large object
 /// ALTER LARGE OBJECT ... OWNER TO.
 fn alter_large_object_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted + needs procedural language
 /// ALTER PROCEDURAL LANGUAGE pltestlang OWNER TO.
 fn alter_language_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted in dump output
 /// ALTER SCHEMA dump_test OWNER TO.
 fn alter_schema_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted in dump output
 /// ALTER SCHEMA dump_test_second_schema OWNER TO.
 fn alter_schema_second_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted in dump output
 /// ALTER SCHEMA public OWNER TO.
 fn alter_schema_public_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted in dump output
 /// ALTER SCHEMA public OWNER TO (without ACL changes).
 fn alter_schema_public_owner_no_acl() {}
 
@@ -131,14 +131,22 @@ fn alter_schema_public_owner_no_acl() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: ALTER SEQUENCE not emitted in dump output
 /// ALTER SEQUENCE test_table_col1_seq is dumped correctly.
 fn alter_sequence() {}
 
 #[test]
-#[ignore]
 /// ALTER TABLE ONLY test_table ADD CONSTRAINT ... PRIMARY KEY.
-fn alter_table_add_primary_key() {}
+fn alter_table_add_primary_key() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-t", "dump_test_simple", "-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ADD CONSTRAINT dump_test_simple_pkey PRIMARY KEY"),
+        "output should contain ALTER TABLE ADD CONSTRAINT PRIMARY KEY:\n{stdout}"
+    );
+}
 
 // The following stubs are replaced by real implementations in the
 // "Constraint support (issue #26)" section near the bottom of this file.
@@ -155,77 +163,77 @@ fn alter_table_add_primary_key() {}
 // stub: alter_table_partitioned_fk    → see issue-26 section below
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: ALTER COLUMN SET STATISTICS not emitted
 /// ALTER TABLE ONLY test_table ALTER COLUMN col1 SET STATISTICS 90.
 fn alter_column_set_statistics() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: ALTER COLUMN SET STORAGE not emitted
 /// ALTER TABLE ONLY test_table ALTER COLUMN col2 SET STORAGE.
 fn alter_column_set_storage_col2() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: ALTER COLUMN SET STORAGE not emitted
 /// ALTER TABLE ONLY test_table ALTER COLUMN col3 SET STORAGE.
 fn alter_column_set_storage_col3() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: ALTER COLUMN SET n_distinct not emitted
 /// ALTER TABLE ONLY test_table ALTER COLUMN col4 SET n_distinct.
 fn alter_column_set_n_distinct() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CLUSTER ON not emitted
 /// ALTER TABLE test_table CLUSTER ON test_table_pkey.
 fn alter_table_cluster() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: DISABLE TRIGGER not emitted
 /// ALTER TABLE test_table DISABLE TRIGGER ALL.
 fn alter_table_disable_trigger() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: foreign table column options not supported
 /// ALTER FOREIGN TABLE foreign_table ALTER COLUMN c1 OPTIONS.
 fn alter_foreign_table_column_options() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted in dump output
 /// ALTER TABLE test_table OWNER TO.
 fn alter_table_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: ENABLE ROW LEVEL SECURITY not emitted
 /// ALTER TABLE test_table ENABLE ROW LEVEL SECURITY.
 fn alter_table_enable_rls() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted in dump output
 /// ALTER TABLE test_second_table OWNER TO.
 fn alter_second_table_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted in dump output
 /// ALTER TABLE measurement OWNER TO.
 fn alter_measurement_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted in dump output
 /// ALTER TABLE measurement_y2006m2 OWNER TO.
 fn alter_measurement_partition_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted + needs foreign table
 /// ALTER FOREIGN TABLE foreign_table OWNER TO.
 fn alter_foreign_table_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted + needs text search config
 /// ALTER TEXT SEARCH CONFIGURATION alt_ts_conf1 OWNER TO.
 fn alter_ts_config_owner() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: OWNER TO not emitted + needs text search dictionary
 /// ALTER TEXT SEARCH DICTIONARY alt_ts_dict1 OWNER TO.
 fn alter_ts_dict_owner() {}
 
@@ -234,17 +242,17 @@ fn alter_ts_dict_owner() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: large object support
 /// LO create (using lo_from_bytea) appears in appropriate runs.
 fn lo_create() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: large object support
 /// LO load (using lo_from_bytea).
 fn lo_load() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: large object support
 /// LO create (with no data) for schema-only dumps.
 fn lo_create_no_data() {}
 
@@ -253,82 +261,82 @@ fn lo_create_no_data() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON DATABASE postgres.
 fn comment_on_database() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON EXTENSION plpgsql.
 fn comment_on_extension() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON SCHEMA public / COMMENT ON SCHEMA public IS NULL.
 fn comment_on_schema_public() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON TABLE dump_test.test_table.
 fn comment_on_table() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON COLUMN dump_test.test_table.col1.
 fn comment_on_column() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON COLUMN dump_test.composite.f1.
 fn comment_on_composite_column() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON COLUMN dump_test.test_second_table.col1 / col2.
 fn comment_on_second_table_columns() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON CONVERSION dump_test.test_conversion.
 fn comment_on_conversion() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON COLLATION test0.
 fn comment_on_collation() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted + needs large object
 /// COMMENT ON LARGE OBJECT.
 fn comment_on_large_object() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted + needs policy
 /// COMMENT ON POLICY p1.
 fn comment_on_policy() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted + needs publication
 /// COMMENT ON PUBLICATION pub1.
 fn comment_on_publication() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted + needs subscription
 /// COMMENT ON SUBSCRIPTION sub1.
 fn comment_on_subscription() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted + needs text search objects
 /// COMMENT ON TEXT SEARCH CONFIGURATION / DICTIONARY / PARSER / TEMPLATE.
 fn comment_on_text_search_objects() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON TYPE (ENUM, RANGE, Regular, Undefined).
 fn comment_on_types() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: COMMENT ON not emitted + needs domain
 /// COMMENT ON CONSTRAINT ON DOMAIN.
 fn comment_on_domain_constraint() {}
 
@@ -361,13 +369,13 @@ fn copy_test_table() {
 // stub: copy_fk_reference_test_table → see issue-26 section below
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs dump_test schema with multiple test tables
 /// COPY test_second_table / test_third_table / test_fourth_table /
 /// test_fifth_table.
 fn copy_other_tables() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs identity column table setup
 /// COPY test_table_identity.
 fn copy_test_table_identity() {}
 
@@ -430,13 +438,13 @@ fn insert_rows_per_insert() {
 }
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs dump_test schema with multiple test tables
 /// INSERT INTO test_second_table / test_third_table / test_fourth_table /
 /// test_fifth_table / test_table_identity.
 fn insert_into_other_tables() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs partitioned measurement table setup
 /// COPY measurement (partitioned table data).
 fn copy_measurement() {}
 
@@ -445,32 +453,32 @@ fn copy_measurement() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: pg_dumpall required for CREATE ROLE
 /// CREATE ROLE regress_dump_test_role appears in globals dump.
 fn create_role() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: pg_dumpall required for CREATE ROLE
 /// CREATE ROLE regress_quoted... (with special characters).
 fn create_role_quoted() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: newline handling in table name comments
 /// Newline in table name handled in comments.
 fn newline_in_table_name_comment() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE TABLESPACE not emitted in dump output
 /// CREATE TABLESPACE regress_dump_tablespace.
 fn create_tablespace() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs LATIN1-encoded database
 /// CREATE DATABASE regression_invalid... for encoding tests.
 fn create_database_invalid() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE DATABASE only emitted with --create, needs separate test DB
 /// CREATE DATABASE postgres / dump_test.
 fn create_database() {}
 
@@ -479,27 +487,27 @@ fn create_database() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE EXTENSION not emitted in dump output
 /// CREATE EXTENSION ... plpgsql.
 fn create_extension_plpgsql() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE ACCESS METHOD not emitted
 /// CREATE ACCESS METHOD gist2.
 fn create_access_method() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE COLLATION not emitted + needs collation setup
 /// CREATE COLLATION test0 FROM "C".
 fn create_collation() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE COLLATION not emitted + needs ICU
 /// CREATE COLLATION icu_collation (when ICU is available).
 fn create_collation_icu() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE CAST not emitted
 /// CREATE CAST FOR timestamptz.
 fn create_cast() {}
 
@@ -509,102 +517,102 @@ fn create_cast() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE AGGREGATE not emitted + needs dump_test schema
 /// CREATE AGGREGATE dump_test.newavg.
 fn create_aggregate() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE CONVERSION not emitted + needs dump_test schema
 /// CREATE CONVERSION dump_test.test_conversion.
 fn create_conversion() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE DOMAIN not emitted + needs dump_test schema
 /// CREATE DOMAIN dump_test.us_postal_code.
 fn create_domain() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE FUNCTION not emitted + needs PL handler
 /// CREATE FUNCTION dump_test.pltestlang_call_handler.
 fn create_function_pltestlang_handler() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE FUNCTION not emitted + needs trigger function
 /// CREATE FUNCTION dump_test.trigger_func.
 fn create_function_trigger() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE FUNCTION not emitted + needs event trigger
 /// CREATE FUNCTION dump_test.event_trigger_func.
 fn create_function_event_trigger() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE FUNCTION not emitted + needs custom type
 /// CREATE FUNCTION dump_test.int42_in / int42_out.
 fn create_function_int42() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE FUNCTION ... SUPPORT not emitted
 /// CREATE FUNCTION ... SUPPORT.
 fn create_function_support() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: function-depends-on-PK ordering not verified
 /// Ordering: function that depends on a primary key.
 fn function_depends_on_primary_key() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE PROCEDURE not emitted
 /// CREATE PROCEDURE dump_test.ptest1.
 fn create_procedure() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE OPERATOR FAMILY not emitted
 /// CREATE OPERATOR FAMILY dump_test.op_family / op_family USING btree.
 fn create_operator_family() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE OPERATOR CLASS not emitted
 /// CREATE OPERATOR CLASS dump_test.op_class / op_class_custom / op_class_empty.
 fn create_operator_class() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE EVENT TRIGGER not emitted
 /// CREATE EVENT TRIGGER test_event_trigger.
 fn create_event_trigger() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE TRIGGER not emitted
 /// CREATE TRIGGER test_trigger.
 fn create_trigger() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE TYPE ENUM not emitted + needs dump_test schema
 /// CREATE TYPE dump_test.planets AS ENUM.
 fn create_type_enum() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: binary upgrade mode not supported
 /// CREATE TYPE dump_test.planets AS ENUM (pg_upgrade variant).
 fn create_type_enum_pg_upgrade() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE TYPE RANGE not emitted
 /// CREATE TYPE dump_test.textrange AS RANGE.
 fn create_type_range() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE TYPE not emitted + needs custom type
 /// CREATE TYPE dump_test.int42 (shell + populated).
 fn create_type_int42() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE TYPE composite not emitted
 /// CREATE TYPE dump_test.composite.
 fn create_type_composite() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE TYPE shell not emitted
 /// CREATE TYPE dump_test.undefined.
 fn create_type_undefined() {}
 
@@ -613,27 +621,27 @@ fn create_type_undefined() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: text search objects not emitted in dump
 /// CREATE TEXT SEARCH CONFIGURATION dump_test.alt_ts_conf1.
 fn create_ts_configuration() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: text search objects not emitted in dump
 /// ALTER TEXT SEARCH CONFIGURATION dump_test.alt_ts_conf1 ... ADD MAPPING.
 fn alter_ts_configuration_mapping() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: text search objects not emitted in dump
 /// CREATE TEXT SEARCH TEMPLATE dump_test.alt_ts_temp1.
 fn create_ts_template() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: text search objects not emitted in dump
 /// CREATE TEXT SEARCH PARSER dump_test.alt_ts_prs1.
 fn create_ts_parser() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: text search objects not emitted in dump
 /// CREATE TEXT SEARCH DICTIONARY dump_test.alt_ts_dict1.
 fn create_ts_dictionary() {}
 
@@ -642,22 +650,22 @@ fn create_ts_dictionary() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: FDW objects not emitted + needs complex setup
 /// CREATE FOREIGN DATA WRAPPER dummy.
 fn create_fdw() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: foreign server not emitted + needs FDW setup
 /// CREATE SERVER s1 FOREIGN DATA WRAPPER dummy.
 fn create_foreign_server() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: foreign table not emitted + needs FDW/server setup
 /// CREATE FOREIGN TABLE dump_test.foreign_table SERVER s1.
 fn create_foreign_table() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: user mapping not emitted + needs FDW/server setup
 /// CREATE USER MAPPING FOR regress_dump_test_role SERVER s1.
 fn create_user_mapping() {}
 
@@ -666,12 +674,12 @@ fn create_user_mapping() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE TRANSFORM not emitted
 /// CREATE TRANSFORM FOR int.
 fn create_transform() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE LANGUAGE not emitted
 /// CREATE LANGUAGE pltestlang.
 fn create_language() {}
 
@@ -680,18 +688,18 @@ fn create_language() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: materialized view DDL not emitted
 /// CREATE MATERIALIZED VIEW matview / matview_second / matview_third /
 /// matview_fourth.
 fn create_materialized_views() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: matview-depends-on-PK ordering not verified
 /// Ordering: matview that depends on a primary key.
 fn matview_depends_on_primary_key() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: REFRESH MATERIALIZED VIEW not emitted
 /// REFRESH MATERIALIZED VIEW matview / matview_second / matview_third /
 /// matview_fourth.
 fn refresh_materialized_views() {}
@@ -701,7 +709,7 @@ fn refresh_materialized_views() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE POLICY not emitted + needs RLS setup
 /// CREATE POLICY p1..p6 ON test_table (various FOR clauses and RESTRICTIVE).
 fn create_policies() {}
 
@@ -710,7 +718,7 @@ fn create_policies() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: property graph not emitted + PG18+ feature
 /// CREATE PROPERTY GRAPH propgraph.
 fn create_property_graph() {}
 
@@ -719,27 +727,27 @@ fn create_property_graph() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: publication objects not emitted
 /// CREATE PUBLICATION pub1..pub10 with varying configurations.
 fn create_publications() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: publication objects not emitted
 /// ALTER PUBLICATION pub1 ADD TABLE ... (multiple tables).
 fn alter_publication_add_table() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: publication objects not emitted
 /// ALTER PUBLICATION pub3 ADD TABLES IN SCHEMA.
 fn alter_publication_add_tables_in_schema() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: publication objects not emitted
 /// ALTER PUBLICATION pub4 ADD TABLE ... WHERE (col1 > 0).
 fn alter_publication_add_table_where() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: subscription objects not emitted
 /// CREATE SUBSCRIPTION sub1 / sub2 / sub3.
 fn create_subscriptions() {}
 
@@ -748,7 +756,7 @@ fn create_subscriptions() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE SCHEMA not emitted in dump output
 /// CREATE SCHEMA public / dump_test / dump_test_second_schema.
 fn create_schemas() {}
 
@@ -785,58 +793,58 @@ fn create_test_table() {
 // stub: create_fk_reference_table → see issue-26 section below
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs dump_test schema with test_second_table
 /// CREATE TABLE test_second_table.
 fn create_second_table() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs partitioned measurement table setup
 /// CREATE TABLE measurement PARTITIONED BY with partition and triggers.
 fn create_measurement_partitioned() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs partitioned measurement table setup
 /// Partition measurement_y2006m2 creation.
 fn create_measurement_partition() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: trigger DDL not emitted
 /// Triggers on partitions: creation, disabled/replica/always variants,
 /// and trigger preservation across dump/restore.
 fn partition_triggers() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs generated column table setup
 /// CREATE TABLE test_third_table_generated_cols.
 fn create_third_table_generated() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs zero-column table setup
 /// CREATE TABLE test_fourth_table_zero_col.
 fn create_fourth_table_zero_col() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs dump_test schema with multiple tables
 /// CREATE TABLE test_fifth_table / test_sixth_table / test_seventh_table.
 fn create_fifth_sixth_seventh_tables() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs identity column table setup
 /// CREATE TABLE test_table_identity.
 fn create_table_identity() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs generated column + inheritance setup
 /// CREATE TABLE test_table_generated and children (with/without local cols).
 fn create_table_generated() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs table with custom statistics target
 /// CREATE TABLE table_with_stats.
 fn create_table_with_stats() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs inheritance parent/child table setup
 /// CREATE TABLE test_inheritance_parent / test_inheritance_child.
 fn create_inheritance_tables() {}
 
@@ -845,18 +853,18 @@ fn create_inheritance_tables() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: extended statistics objects not emitted
 /// CREATE STATISTICS extended_stats_no_options / extended_stats_options /
 /// extended_stats_expression.
 fn create_extended_statistics() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: extended statistics objects not emitted
 /// ALTER STATISTICS extended_stats_options.
 fn alter_extended_statistics() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: statistics import not emitted
 /// statistics_import / extended_statistics_import /
 /// relstats_on_unanalyzed_tables.
 fn statistics_import() {}
@@ -866,27 +874,27 @@ fn statistics_import() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE SEQUENCE not emitted separately
 /// CREATE SEQUENCE test_table_col1_seq.
 fn create_sequence() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs partitioned measurement table + index setup
 /// CREATE INDEX ON ONLY measurement / measurement_y2006_m2.
 fn create_index_measurement() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs partitioned measurement table setup
 /// ALTER TABLE measurement PRIMARY KEY.
 fn alter_measurement_primary_key() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: ALTER INDEX ATTACH PARTITION not emitted
 /// ALTER INDEX ... ATTACH PARTITION (regular and primary key).
 fn alter_index_attach_partition() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: CREATE VIEW not emitted in dump output
 /// CREATE VIEW test_view / ALTER VIEW test_view SET DEFAULT.
 fn create_view() {}
 
@@ -895,28 +903,67 @@ fn create_view() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: DROP SCHEMA not emitted by --clean
 /// DROP SCHEMA public / dump_test / dump_test_second_schema appear
 /// in clean runs.
 fn drop_schemas() {}
 
 #[test]
-#[ignore]
 /// DROP TABLE test_table / fk_reference_test_table / test_second_table.
-fn drop_tables() {}
+fn drop_tables() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-t", "dump_test_simple", "-d", "postgres", "--clean"]);
+    assert_eq!(code, 0, "pg_dump --clean should succeed");
+    assert!(
+        stdout.contains("DROP TABLE"),
+        "output should contain DROP TABLE:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("dump_test_simple"),
+        "DROP TABLE should reference the test table:\n{stdout}"
+    );
+    // Without --if-exists, should NOT use IF EXISTS.
+    let drop_line = stdout
+        .lines()
+        .find(|l| l.contains("DROP TABLE") && l.contains("dump_test_simple"))
+        .expect("should have a DROP TABLE line");
+    assert!(
+        !drop_line.contains("IF EXISTS"),
+        "DROP TABLE without --if-exists should not use IF EXISTS:\n{drop_line}"
+    );
+}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: DROP EXTENSION/FUNCTION/LANGUAGE not emitted by --clean
 /// DROP EXTENSION plpgsql / DROP FUNCTION / DROP LANGUAGE pltestlang.
 fn drop_extension_function_language() {}
 
 #[test]
-#[ignore]
 /// DROP IF EXISTS variants for --clean --if-exists runs.
-fn drop_if_exists() {}
+fn drop_if_exists() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&[
+        "-t",
+        "dump_test_simple",
+        "-d",
+        "postgres",
+        "--clean",
+        "--if-exists",
+    ]);
+    assert_eq!(code, 0, "pg_dump --clean --if-exists should succeed");
+    assert!(
+        stdout.contains("DROP TABLE IF EXISTS"),
+        "output should contain DROP TABLE IF EXISTS:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("dump_test_simple"),
+        "DROP IF EXISTS should reference the test table:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: pg_dumpall required for DROP ROLE
 /// DROP ROLE regress_dump_test_role / pg_.
 fn drop_roles() {}
 
@@ -925,82 +972,82 @@ fn drop_roles() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: GRANT not emitted in dump output
 /// GRANT USAGE ON SCHEMA dump_test_second_schema.
 fn grant_usage_schema() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: GRANT not emitted + needs FDW/server
 /// GRANT USAGE ON FOREIGN DATA WRAPPER / FOREIGN SERVER.
 fn grant_usage_fdw_server() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: GRANT not emitted + needs domain/type
 /// GRANT USAGE ON DOMAIN / TYPE (int42, planets, textrange).
 fn grant_usage_domain_type() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: GRANT not emitted in dump output
 /// GRANT CREATE ON DATABASE dump_test.
 fn grant_create_database() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: GRANT not emitted in dump output
 /// GRANT SELECT ON TABLE test_table / measurement / measurement_y2006m2.
 fn grant_select_tables() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: GRANT not emitted + needs large object
 /// GRANT ALL ON LARGE OBJECT.
 fn grant_all_large_object() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: GRANT not emitted in dump output
 /// GRANT INSERT(col1) ON TABLE test_second_table.
 fn grant_column_privilege() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: GRANT not emitted + PG18+ property graph
 /// GRANT SELECT ON PROPERTY GRAPH propgraph.
 fn grant_select_property_graph() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: GRANT not emitted in dump output
 /// GRANT EXECUTE ON FUNCTION pg_sleep() TO regress_dump_test_role.
 fn grant_execute_function() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: GRANT not emitted in dump output
 /// GRANT SELECT (proname ...) ON TABLE pg_proc TO public.
 fn grant_select_pg_proc() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: GRANT not emitted in dump output
 /// GRANT USAGE ON SCHEMA public TO public.
 fn grant_usage_schema_public() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: REVOKE not emitted in dump output
 /// REVOKE CONNECT ON DATABASE dump_test FROM public.
 fn revoke_connect_database() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: REVOKE not emitted in dump output
 /// REVOKE EXECUTE ON FUNCTION pg_sleep() FROM public.
 fn revoke_execute_function() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: REVOKE not emitted in dump output
 /// REVOKE SELECT ON TABLE pg_proc FROM public.
 fn revoke_select_pg_proc() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: REVOKE not emitted in dump output
 /// REVOKE ALL ON SCHEMA public.
 fn revoke_all_schema_public() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: REVOKE not emitted + needs language setup
 /// REVOKE USAGE ON LANGUAGE plpgsql FROM public.
 fn revoke_usage_language() {}
 
@@ -1009,17 +1056,17 @@ fn revoke_usage_language() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: custom access method not emitted
 /// CREATE ACCESS METHOD regress_test_table_am.
 fn create_access_method_table_am() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: custom access method not emitted
 /// CREATE TABLE regress_pg_dump_table_am (using custom AM).
 fn create_table_am() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: materialized view with custom AM not emitted
 /// CREATE MATERIALIZED VIEW regress_pg_dump_matview_am.
 fn create_matview_am() {}
 
@@ -1028,7 +1075,7 @@ fn create_matview_am() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: needs regress_pg_dump_table_part setup
 /// CREATE TABLE regress_pg_dump_table_part (partitioned).
 fn create_table_part() {}
 
@@ -1040,7 +1087,7 @@ fn create_table_part() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: --binary-upgrade flag not supported
 /// binary_upgrade: pg_dump --binary-upgrade --format=custom produces valid output.
 fn run_binary_upgrade() {}
 
@@ -1272,12 +1319,12 @@ fn run_defaults_dir_format() {
 }
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: parallel dump needs dedicated test infrastructure
 /// defaults_parallel: pg_dump --format=directory --jobs=2.
 fn run_defaults_parallel() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: tar format output is plain text, not real tar
 /// defaults_tar_format: pg_dump --format=tar → pg_restore round-trip.
 fn run_defaults_tar_format() {}
 
@@ -1339,7 +1386,7 @@ fn run_exclude_table() {
 }
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: --exclude-table-and-children flag not supported
 /// exclude_measurement: pg_dump --exclude-table-and-children=dump_test.measurement.
 /// No measurement/partition table exists in the test schema — skipping.
 fn run_exclude_measurement() {}
@@ -1436,54 +1483,76 @@ fn run_rows_per_insert() {
 }
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: pg_dumpall not supported
 /// pg_dumpall_globals: pg_dumpall --globals-only.
 fn run_pg_dumpall_globals() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: pg_dumpall not supported
 /// pg_dumpall_globals_clean: pg_dumpall --globals-only --clean.
 fn run_pg_dumpall_globals_clean() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: pg_dumpall not supported
 /// pg_dumpall_dbprivs: pg_dumpall full dump.
 fn run_pg_dumpall_dbprivs() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: pg_dumpall not supported
 /// pg_dumpall_exclude: pg_dumpall --exclude-database.
 fn run_pg_dumpall_exclude() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: --no-toast-compression flag not supported
 /// no_toast_compression: pg_dump --no-toast-compression.
 fn run_no_toast_compression() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: --no-large-objects flag not supported
 /// no_large_objects: pg_dump --no-large-objects.
 fn run_no_large_objects() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: --no-policies flag not supported
 /// no_policies / no_policies_restore: pg_dump/pg_restore --no-policies.
 fn run_no_policies() {}
 
 #[test]
-#[ignore]
 /// no_privs: pg_dump --no-privileges.
-fn run_no_privs() {}
+fn run_no_privs() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&[
+        "-t",
+        "dump_test_simple",
+        "-d",
+        "postgres",
+        "--no-privileges",
+    ]);
+    assert_eq!(code, 0, "pg_dump --no-privileges should succeed");
+    assert!(
+        stdout.contains("CREATE TABLE"),
+        "output should contain CREATE TABLE:\n{stdout}"
+    );
+    // No GRANT or REVOKE lines should appear.
+    assert!(
+        !stdout.contains("\nGRANT "),
+        "output should NOT contain GRANT with --no-privileges:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("\nREVOKE "),
+        "output should NOT contain REVOKE with --no-privileges:\n{stdout}"
+    );
+}
 
 // run_no_owner implemented below in issue-25 section
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: --no-subscriptions flag not supported
 /// no_subscriptions / no_subscriptions_restore: --no-subscriptions.
 fn run_no_subscriptions() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: --no-table-access-method flag not supported
 /// no_table_access_method: pg_dump --no-table-access-method.
 fn run_no_table_access_method() {}
 
@@ -1537,13 +1606,13 @@ fn run_only_table() {
 }
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: --table-and-children flag not supported
 /// only_dump_measurement: pg_dump --table-and-children=dump_test.measurement.
 /// No measurement/partition table exists in the test schema — skipping.
 fn run_only_measurement() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: --role flag not supported
 /// role / role_parallel: pg_dump --role=regress_dump_test_role --schema=...
 fn run_role() {}
 
@@ -1570,28 +1639,28 @@ fn run_schema_only() {
 }
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: --section flag not supported
 /// section_pre_data / section_data / section_post_data:
 /// pg_dump --section=pre-data / data / post-data.
 fn run_sections() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: --large-objects flag not supported
 /// test_schema_plus_large_objects: pg_dump --schema=dump_test --large-objects.
 fn run_schema_plus_large_objects() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: --no-statistics flag not supported by pg-dump subcommand
 /// no_statistics: pg_dump --no-statistics.
 fn run_no_statistics() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: --statistics-only flag not supported by pg-dump subcommand
 /// statistics_only: pg_dump --statistics-only.
 fn run_statistics_only() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: --no-data/--no-schema flags not supported
 /// no_data_no_schema / no_schema: pg_dump --no-data --no-schema /
 /// pg_dump --no-schema.
 fn run_no_data_no_schema() {}
@@ -1601,13 +1670,13 @@ fn run_no_data_no_schema() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: cross-database reference rejection not implemented (silently returns empty dump)
 /// pg_dump --table rejects cross-database two-part names.
 /// `pg_dump --table other_db.pg_catalog.pg_class` → error
 fn reject_cross_database_two_part() {}
 
 #[test]
-#[ignore]
+#[ignore] // not yet implemented: cross-database reference rejection not implemented (silently returns empty dump)
 /// pg_dump --table rejects cross-database three-part names.
 /// `pg_dump --table "some.other.db".pg_catalog.pg_class` → error
 fn reject_cross_database_three_part() {}
@@ -1617,21 +1686,80 @@ fn reject_cross_database_three_part() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
 /// defaults_no_public: dump of regress_pg_dump_test (database without
 /// public schema) works correctly.
-fn run_defaults_no_public() {}
+fn run_defaults_no_public() {
+    let dbname = "t002_no_public";
+    crate::common::create_test_db(dbname);
+    // Drop the public schema so this DB has no public schema.
+    crate::common::psql(dbname, "DROP SCHEMA IF EXISTS public CASCADE;");
+
+    let conninfo = crate::common::test_conninfo(dbname);
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", &conninfo]);
+    assert_eq!(code, 0, "pg_dump of DB without public schema should succeed");
+    assert!(
+        stdout.contains("PostgreSQL database dump"),
+        "output should contain dump header:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("CREATE TABLE public."),
+        "output should NOT reference public schema tables:\n{stdout}"
+    );
+
+    crate::common::drop_test_db(dbname);
+}
 
 #[test]
-#[ignore]
 /// defaults_no_public_clean: dump with --clean of database without
 /// public schema.
-fn run_defaults_no_public_clean() {}
+fn run_defaults_no_public_clean() {
+    let dbname = "t002_no_public_clean";
+    crate::common::create_test_db(dbname);
+    crate::common::psql(dbname, "DROP SCHEMA IF EXISTS public CASCADE;");
+
+    let conninfo = crate::common::test_conninfo(dbname);
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", &conninfo, "--clean"]);
+    assert_eq!(
+        code, 0,
+        "pg_dump --clean of DB without public schema should succeed"
+    );
+    assert!(
+        stdout.contains("PostgreSQL database dump"),
+        "output should contain dump header:\n{stdout}"
+    );
+
+    crate::common::drop_test_db(dbname);
+}
 
 #[test]
-#[ignore]
 /// defaults_public_owner: dump of regress_public_owner database.
-fn run_defaults_public_owner() {}
+fn run_defaults_public_owner() {
+    let dbname = "t002_public_owner";
+    crate::common::create_test_db(dbname);
+    // Transfer public schema ownership to a non-superuser role.
+    crate::common::psql(
+        "postgres",
+        "DO $$ BEGIN \
+           IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dump_test_role') THEN \
+             CREATE ROLE dump_test_role; \
+           END IF; \
+         END $$;",
+    );
+    crate::common::psql(dbname, "ALTER SCHEMA public OWNER TO dump_test_role;");
+
+    let conninfo = crate::common::test_conninfo(dbname);
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", &conninfo]);
+    assert_eq!(
+        code, 0,
+        "pg_dump of DB with changed public owner should succeed"
+    );
+    assert!(
+        stdout.contains("PostgreSQL database dump"),
+        "output should contain dump header:\n{stdout}"
+    );
+
+    crate::common::drop_test_db(dbname);
+}
 
 // ---------------------------------------------------------------
 // Module: --no-owner / --no-acl (issue #25)
