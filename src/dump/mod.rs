@@ -77,7 +77,7 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     if opts.create_db {
         let dbname = &opts.dbname;
         out.push_str(&format!("CREATE DATABASE \"{dbname}\";\n"));
-        out.push_str(&format!("\\connect {dbname}\n\n"));
+        out.push_str(&format!("\\connect \"{dbname}\"\n\n"));
     }
 
     out.push_str("SET statement_timeout = 0;\n");

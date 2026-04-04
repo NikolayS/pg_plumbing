@@ -355,10 +355,9 @@ pub async fn restore_plain(sql: &str, opts: &RestoreOptions) -> Result<()> {
     if opts.clean {
         let drop_stmts = generate_drop_statements(sql, opts.if_exists);
         if !drop_stmts.is_empty() {
-            client
-                .batch_execute(&drop_stmts)
-                .await
-                .context("failed to execute clean (DROP) statements")?;
+            // Ignore errors — objects may not exist yet (the most common case).
+            // This matches pg_restore --clean behavior for plain format.
+            let _ = client.batch_execute(&drop_stmts).await;
         }
     }
 

@@ -153,6 +153,11 @@ async fn main() -> Result<()> {
 }
 
 async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
+    // --if-exists requires --clean
+    if args.if_exists && !args.clean {
+        bail!("pg_dump: error: option --if-exists requires option -c/--clean");
+    }
+
     let dbname = args
         .dbname
         .as_deref()

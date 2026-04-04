@@ -282,6 +282,19 @@ fn main() {
 
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
 
+    // Warn when --clean or --create are used with non-plain formats (they are no-ops).
+    let is_non_plain = matches!(format_str, "custom" | "c" | "directory" | "d");
+    if is_non_plain && cli.clean {
+        eprintln!(
+            "pg_dump: warning: --clean is not yet supported for custom/directory format, ignored"
+        );
+    }
+    if is_non_plain && cli.create {
+        eprintln!(
+            "pg_dump: warning: --create is not yet supported for custom/directory format, ignored"
+        );
+    }
+
     match format_str {
         "custom" | "c" => {
             let bytes = rt.block_on(dump::dump_custom(&opts)).unwrap_or_else(|e| {
