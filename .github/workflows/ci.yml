@@ -73,6 +73,7 @@ jobs:
           sudo cpanm --quiet IPC::Run
 
       - name: Download PostgreSQL TAP tests
+        continue-on-error: true  # advisory: network flakes should not block CI
         run: |
           mkdir -p /tmp/pg-tap-tests
           BASE=https://raw.githubusercontent.com/postgres/postgres/REL_16_STABLE/src/bin/pg_dump/t
