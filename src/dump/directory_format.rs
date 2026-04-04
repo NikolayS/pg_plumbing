@@ -51,8 +51,7 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
     }
 
     // Connect to the database (for schema + sequential data path).
-    let conninfo = crate::build_conninfo(&opts.dbname);
-    let (client, connection) = tokio_postgres::connect(&conninfo, NoTls)
+    let (client, connection) = tokio_postgres::connect(&opts.conninfo, NoTls)
         .await
         .with_context(|| format!("failed to connect to database \"{}\"", opts.dbname))?;
 
@@ -175,7 +174,7 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
         } else {
             // Parallel path — spawn N tasks, each with its own DB connection.
             let jobs = opts.jobs;
-            let conninfo = crate::build_conninfo(&opts.dbname);
+            let conninfo = opts.conninfo.clone();
             let semaphore = Arc::new(Semaphore::new(jobs));
             let dir_path_owned = dir_path.to_path_buf();
             let opts_arc = Arc::new(opts.clone());

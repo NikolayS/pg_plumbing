@@ -271,9 +271,7 @@ fn main() {
         user: cli.username.clone(),
         password: cli.password.clone(),
     };
-    // Resolve conninfo once; store the result as dbname so that the restore
-    // functions (which call build_conninfo internally) pass it through unchanged.
-    let dbname = pg_plumbing::build_conninfo_with_params(&raw_dbname, &conn_params);
+    let conninfo = pg_plumbing::build_conninfo_with_params(&raw_dbname, &conn_params);
 
     // Require a positional file.
     let filename = match cli.filenames.first() {
@@ -292,7 +290,8 @@ fn main() {
         .max(1);
 
     let opts = restore::RestoreOptions {
-        dbname,
+        dbname: raw_dbname.clone(),
+        conninfo,
         clean: cli.clean,
         if_exists: cli.if_exists,
         jobs,

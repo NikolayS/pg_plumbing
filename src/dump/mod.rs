@@ -15,8 +15,10 @@ use tokio_postgres::NoTls;
 /// Options controlling what and how to dump.
 #[derive(Debug, Clone)]
 pub struct DumpOptions {
-    /// Database name or connection string.
+    /// Bare database name (used for DDL: CREATE DATABASE, \connect).
     pub dbname: String,
+    /// Full conninfo string (used for the actual connection).
+    pub conninfo: String,
     /// Tables to include (empty = all).
     pub tables: Vec<String>,
     /// Dump only the schema, no data.
@@ -53,8 +55,7 @@ pub struct DumpOptions {
 
 /// Dump a database in plain SQL format.
 pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
-    let conninfo = crate::build_conninfo(&opts.dbname);
-    let (client, connection) = tokio_postgres::connect(&conninfo, NoTls)
+    let (client, connection) = tokio_postgres::connect(&opts.conninfo, NoTls)
         .await
         .with_context(|| format!("failed to connect to database \"{}\"", opts.dbname))?;
 
@@ -204,8 +205,7 @@ pub async fn dump_custom(opts: &DumpOptions) -> Result<Vec<u8>> {
     use custom_format::{write_data_block, write_eof, write_header, write_toc_entry, TocEntry};
     use format::write_table_data_to_string;
 
-    let conninfo = crate::build_conninfo(&opts.dbname);
-    let (client, connection) = tokio_postgres::connect(&conninfo, NoTls)
+    let (client, connection) = tokio_postgres::connect(&opts.conninfo, NoTls)
         .await
         .with_context(|| format!("failed to connect to database \"{}\"", opts.dbname))?;
 

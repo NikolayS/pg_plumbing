@@ -317,7 +317,8 @@ fn main() {
     let conninfo = pg_plumbing::build_conninfo_with_params(&dbname, &conn_params);
 
     let opts = dump::DumpOptions {
-        dbname: conninfo,
+        dbname: dbname.clone(),
+        conninfo,
         tables: cli.table.clone(),
         schema_only: cli.schema_only,
         data_only: cli.data_only,

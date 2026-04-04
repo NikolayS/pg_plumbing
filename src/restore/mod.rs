@@ -18,8 +18,10 @@ use crate::dump::custom_format;
 /// Options controlling how to restore.
 #[derive(Debug, Clone)]
 pub struct RestoreOptions {
-    /// Target database name or connection string.
+    /// Bare target database name (for display/error messages).
     pub dbname: String,
+    /// Full conninfo string (used for the actual connection).
+    pub conninfo: String,
     /// Drop objects before recreating them.
     pub clean: bool,
     /// Use DROP ... IF EXISTS (only meaningful with clean).
@@ -143,8 +145,7 @@ pub async fn restore_directory(input_dir: &str, opts: &RestoreOptions) -> Result
     }
 
     // Connect to the database for DDL (always single-threaded).
-    let conninfo = crate::build_conninfo(&opts.dbname);
-    let (client, connection) = tokio_postgres::connect(&conninfo, NoTls)
+    let (client, connection) = tokio_postgres::connect(&opts.conninfo, NoTls)
         .await
         .with_context(|| format!("failed to connect to database \"{}\"", opts.dbname))?;
 
@@ -182,7 +183,7 @@ pub async fn restore_directory(input_dir: &str, opts: &RestoreOptions) -> Result
         let jobs = opts.jobs;
         let semaphore = Arc::new(Semaphore::new(jobs));
         let dir_path_owned = dir_path.to_path_buf();
-        let conninfo_owned = conninfo.clone();
+        let conninfo_owned = opts.conninfo.clone();
 
         let mut handles = Vec::new();
         for (qname, dat_file) in data_entries {
@@ -267,8 +268,7 @@ pub async fn restore_custom(data: &[u8], opts: &RestoreOptions) -> Result<()> {
         .collect();
 
     // ── Connect ────────────────────────────────────────────────────────────
-    let conninfo = crate::build_conninfo(&opts.dbname);
-    let (client, connection) = tokio_postgres::connect(&conninfo, NoTls)
+    let (client, connection) = tokio_postgres::connect(&opts.conninfo, NoTls)
         .await
         .with_context(|| format!("failed to connect to database \"{}\"", opts.dbname))?;
 
@@ -341,8 +341,7 @@ pub async fn restore_custom(data: &[u8], opts: &RestoreOptions) -> Result<()> {
 
 /// Restore a plain-format SQL dump to a database.
 pub async fn restore_plain(sql: &str, opts: &RestoreOptions) -> Result<()> {
-    let conninfo = crate::build_conninfo(&opts.dbname);
-    let (client, connection) = tokio_postgres::connect(&conninfo, NoTls)
+    let (client, connection) = tokio_postgres::connect(&opts.conninfo, NoTls)
         .await
         .with_context(|| format!("failed to connect to database \"{}\"", opts.dbname))?;
 

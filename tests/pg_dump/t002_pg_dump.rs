@@ -1113,7 +1113,7 @@ fn run_column_inserts() {
 }
 
 #[test]
-/// createdb: pg_dump --create produces CREATE DATABASE.
+/// createdb: pg_dump --create produces CREATE DATABASE with bare db name, not conninfo.
 fn run_createdb() {
     crate::common::setup_test_schema();
     let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres", "--create"]);
@@ -1125,6 +1125,20 @@ fn run_createdb() {
     assert!(
         stdout.contains("\\connect"),
         "output should contain \\connect:\n{stdout}"
+    );
+    // Regression guard for #34: dbname must be the bare name, not the full conninfo.
+    assert!(
+        stdout.contains("CREATE DATABASE \"postgres\""),
+        "CREATE DATABASE must use bare db name, not conninfo:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\\connect \"postgres\""),
+        "\\connect must use bare db name, not conninfo:\n{stdout}"
+    );
+    // Passwords must never appear in dump output.
+    assert!(
+        !stdout.contains("password="),
+        "dump output must not contain password:\n{stdout}"
     );
 }
 
