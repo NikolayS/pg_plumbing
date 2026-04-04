@@ -1983,7 +1983,9 @@ fn constraint_unique_alter_table() {
 
     // CREATE TABLE should NOT contain the UNIQUE inline.
     // (The column list should not include UNIQUE in the table body.)
-    let create_pos = stdout.find("CREATE TABLE public.i26_unique_table").unwrap_or(0);
+    let create_pos = stdout
+        .find("CREATE TABLE public.i26_unique_table")
+        .unwrap_or(0);
     let alter_pos = stdout.find("ADD CONSTRAINT uniq_email").unwrap_or(0);
     assert!(
         alter_pos > create_pos,
@@ -2103,12 +2105,8 @@ fn comment_on_constraint_chld2() {
              CHECK (region <> '');",
     );
 
-    let (stdout, _stderr, code) = crate::common::run_pg_dump(&[
-        "-t",
-        "i26_part_parent_chld2",
-        "-d",
-        "postgres",
-    ]);
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-t", "i26_part_parent_chld2", "-d", "postgres"]);
     assert_eq!(code, 0, "pg_dump should succeed");
 
     // The parent's CHECK constraint should appear.

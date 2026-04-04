@@ -187,10 +187,7 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
         let columns = get_columns(client, oid).await?;
         let constraints = get_constraints(client, oid).await?;
         // Keep backward-compat field pointing at the first PRIMARY KEY found.
-        let primary_key = constraints
-            .iter()
-            .find(|c| c.contype == 'p')
-            .cloned();
+        let primary_key = constraints.iter().find(|c| c.contype == 'p').cloned();
 
         tables.push(TableInfo {
             schema: schema.to_string(),
