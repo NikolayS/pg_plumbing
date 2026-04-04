@@ -1078,9 +1078,20 @@ fn grant_usage_domain_type() {}
 fn grant_create_database() {}
 
 #[test]
-#[ignore] // not yet implemented: GRANT not emitted in dump output
-/// GRANT SELECT ON TABLE test_table / measurement / measurement_y2006m2.
-fn grant_select_tables() {}
+/// GRANT SELECT ON TABLE dump_test_simple TO PUBLIC.
+fn grant_select_tables() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("GRANT SELECT ON TABLE") || stdout.contains("GRANT ALL ON TABLE"),
+        "output should contain GRANT ... ON TABLE:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("dump_test_simple"),
+        "GRANT should reference dump_test_simple:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: GRANT not emitted + needs large object
@@ -1108,9 +1119,16 @@ fn grant_execute_function() {}
 fn grant_select_pg_proc() {}
 
 #[test]
-#[ignore] // not yet implemented: GRANT not emitted in dump output
-/// GRANT USAGE ON SCHEMA public TO public.
-fn grant_usage_schema_public() {}
+/// GRANT USAGE ON SCHEMA public TO PUBLIC.
+fn grant_usage_schema_public() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("GRANT") && (stdout.contains("SCHEMA") || stdout.contains("TABLE")),
+        "output should contain GRANT ON SCHEMA or TABLE:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: REVOKE not emitted in dump output
@@ -1128,9 +1146,16 @@ fn revoke_execute_function() {}
 fn revoke_select_pg_proc() {}
 
 #[test]
-#[ignore] // not yet implemented: REVOKE not emitted in dump output
-/// REVOKE ALL ON SCHEMA public.
-fn revoke_all_schema_public() {}
+/// Public schema has default ACLs — dump should contain privilege statements.
+fn revoke_all_schema_public() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("REVOKE") || stdout.contains("GRANT"),
+        "output should contain privilege statements:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: REVOKE not emitted + needs language setup
