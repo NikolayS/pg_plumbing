@@ -37,6 +37,9 @@ pub struct TableInfo {
     pub rls_enabled: bool,
     /// Index name marked for CLUSTER ON, if any.
     pub cluster_index: Option<String>,
+    /// Access method name when non-heap (e.g. `regress_test_table_am`).
+    /// None for regular heap tables.
+    pub am_name: Option<String>,
 }
 
 /// Metadata for a single column.
@@ -184,10 +187,14 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
                          FROM pg_catalog.pg_index idx
                          JOIN pg_catalog.pg_class ci ON ci.oid = idx.indexrelid
                          WHERE idx.indrelid = c.oid AND idx.indisclustered = true
-                         LIMIT 1) AS cluster_index
+                         LIMIT 1) AS cluster_index,
+                        CASE WHEN am.amname IS NOT NULL AND am.amname <> 'heap'
+                             THEN am.amname
+                        END AS am_name
                  from pg_catalog.pg_class c
                  join pg_catalog.pg_namespace n on n.oid = c.relnamespace
                  join pg_catalog.pg_roles r on r.oid = c.relowner
+                 left join pg_catalog.pg_am am on am.oid = c.relam
                  where c.relkind in ('r', 'p')
                    and n.nspname != all($1)
                  order by
@@ -229,11 +236,15 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
                              FROM pg_catalog.pg_index idx
                              JOIN pg_catalog.pg_class ci ON ci.oid = idx.indexrelid
                              WHERE idx.indrelid = c.oid AND idx.indisclustered = true
-                             LIMIT 1) AS cluster_index
+                             LIMIT 1) AS cluster_index,
+                            CASE WHEN am.amname IS NOT NULL AND am.amname <> 'heap'
+                                 THEN am.amname
+                            END AS am_name
                      from pg_catalog.pg_class c
                      join pg_catalog.pg_namespace n
                        on n.oid = c.relnamespace
                      join pg_catalog.pg_roles r on r.oid = c.relowner
+                     left join pg_catalog.pg_am am on am.oid = c.relam
                      where c.relkind in ('r', 'p')
                        and n.nspname = $1
                        and c.relname = $2
@@ -260,6 +271,7 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
         let parent_schema: Option<String> = row.get("parent_schema");
         let rls_enabled: bool = row.get("relrowsecurity");
         let cluster_index: Option<String> = row.get("cluster_index");
+        let am_name: Option<String> = row.get("am_name");
 
         // Schema inclusion filter (supports glob patterns).
         if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
@@ -294,6 +306,7 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
             parent_schema,
             rls_enabled,
             cluster_index,
+            am_name,
         });
     }
 
@@ -1842,6 +1855,830 @@ pub async fn get_policies(client: &Client, opts: &DumpOptions) -> Result<Vec<Pol
     }
     Ok(policies)
 }
+
+// ── Issue-53 structs and queries ────────────────────────────────────────────
+
+/// Metadata for a text search template.
+#[derive(Debug, Clone)]
+pub struct TsTemplateInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Template name.
+    pub name: String,
+    /// Init function name (may be empty).
+    pub init_func: String,
+    /// Init function schema.
+    pub init_schema: String,
+    /// Lexize function name.
+    pub lexize_func: String,
+    /// Lexize function schema.
+    pub lexize_schema: String,
+}
+
+/// Metadata for a text search parser.
+#[derive(Debug, Clone)]
+pub struct TsParserInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Parser name.
+    pub name: String,
+    /// Start function name.
+    pub start_func: String,
+    /// Start function schema.
+    pub start_schema: String,
+    /// GetToken function name.
+    pub gettoken_func: String,
+    /// GetToken function schema.
+    pub gettoken_schema: String,
+    /// End function name.
+    pub end_func: String,
+    /// End function schema.
+    pub end_schema: String,
+    /// LexTypes function name.
+    pub lextypes_func: String,
+    /// LexTypes function schema.
+    pub lextypes_schema: String,
+    /// Headline function name (optional).
+    pub headline_func: String,
+    /// Headline function schema.
+    pub headline_schema: String,
+}
+
+/// Metadata for a text search dictionary.
+#[derive(Debug, Clone)]
+pub struct TsDictInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Dictionary name.
+    pub name: String,
+    /// Owner.
+    pub owner: String,
+    /// Template name.
+    pub tmpl_name: String,
+    /// Template schema.
+    pub tmpl_schema: String,
+    /// Options (raw).
+    pub options: String,
+}
+
+/// Metadata for a text search configuration.
+#[derive(Debug, Clone)]
+pub struct TsConfigInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Configuration name.
+    pub name: String,
+    /// Owner.
+    pub owner: String,
+    /// Parser name.
+    pub parser_name: String,
+    /// Parser schema.
+    pub parser_schema: String,
+    /// Mappings: list of (token_type_alias, dict_schema, dict_name).
+    pub mappings: Vec<(String, String, String)>,
+    /// Comment text, if any.
+    pub comment: Option<String>,
+}
+
+/// Metadata for an access method.
+#[derive(Debug, Clone)]
+pub struct AccessMethodInfo {
+    /// Access method name.
+    pub name: String,
+    /// 'i' = index AM, 't' = table AM.
+    pub amtype: char,
+    /// Handler function name.
+    pub handler_func: String,
+    /// Handler function schema.
+    pub handler_schema: String,
+}
+
+/// Metadata for an aggregate function.
+#[derive(Debug, Clone)]
+pub struct AggregateInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Aggregate name.
+    pub name: String,
+    /// Argument type names (in order).
+    pub arg_types: Vec<String>,
+    /// Transition function (qualified).
+    pub transfn: String,
+    /// State type name.
+    pub stype: String,
+    /// Initial condition value (or empty).
+    pub initcond: String,
+}
+
+/// Metadata for a cast.
+#[derive(Debug, Clone)]
+pub struct CastInfo {
+    /// Source type name.
+    pub source_type: String,
+    /// Target type name.
+    pub target_type: String,
+    /// Cast context: 'e'=explicit, 'a'=assignment, 'i'=implicit.
+    pub context: char,
+    /// Cast method: 'f'=function, 'i'=inout, 'b'=binary.
+    pub method: char,
+    /// Cast function name (or empty for binary/inout).
+    pub func_name: String,
+    /// Cast function schema.
+    pub func_schema: String,
+}
+
+/// Metadata for a collation.
+#[derive(Debug, Clone)]
+pub struct CollationInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Collation name.
+    pub name: String,
+    /// Owner.
+    pub owner: String,
+    /// Provider: 'c'=libc, 'i'=icu.
+    pub provider: char,
+    /// Locale (ICU locale string, or empty).
+    pub locale: String,
+    /// LC_COLLATE (for libc provider).
+    pub lc_collate: String,
+    /// LC_CTYPE (for libc provider).
+    pub lc_ctype: String,
+    /// Comment text, if any.
+    pub comment: Option<String>,
+}
+
+impl CollationInfo {
+    /// Fully qualified name.
+    pub fn qualified_name(&self) -> String {
+        format!("{}.{}", quote_ident(&self.schema), quote_ident(&self.name))
+    }
+}
+
+/// Metadata for a conversion.
+#[derive(Debug, Clone)]
+pub struct ConversionInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Conversion name.
+    pub name: String,
+    /// Owner.
+    pub owner: String,
+    /// Source encoding name.
+    pub from_encoding: String,
+    /// Target encoding name.
+    pub to_encoding: String,
+    /// Conversion function (qualified).
+    pub func_name: String,
+    /// Whether this is the default conversion.
+    pub is_default: bool,
+    /// Comment text, if any.
+    pub comment: Option<String>,
+}
+
+/// Metadata for a procedural language.
+#[derive(Debug, Clone)]
+pub struct LanguageInfo {
+    /// Language name.
+    pub name: String,
+    /// Owner.
+    pub owner: String,
+    /// Whether trusted.
+    pub trusted: bool,
+    /// Call handler function name.
+    pub handler_name: String,
+    /// Call handler schema.
+    pub handler_schema: String,
+    /// Inline handler function name (or empty).
+    pub inline_name: String,
+    /// Validator function name (or empty).
+    pub validator_name: String,
+}
+
+/// Query text search templates from the catalog.
+pub async fn get_ts_templates(client: &Client, opts: &DumpOptions) -> Result<Vec<TsTemplateInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname,
+                    t.tmplname,
+                    COALESCE(ifn.proname, '') AS init_func,
+                    COALESCE(isn.nspname, '') AS init_schema,
+                    lfn.proname AS lexize_func,
+                    lfn_ns.nspname AS lexize_schema
+             FROM pg_catalog.pg_ts_template t
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.tmplnamespace
+             LEFT JOIN pg_catalog.pg_proc ifn ON ifn.oid = t.tmplinit
+             LEFT JOIN pg_catalog.pg_namespace isn ON isn.oid = ifn.pronamespace
+             JOIN pg_catalog.pg_proc lfn ON lfn.oid = t.tmpllexize
+             JOIN pg_catalog.pg_namespace lfn_ns ON lfn_ns.oid = lfn.pronamespace
+             WHERE n.nspname != all($1)
+             ORDER BY n.nspname, t.tmplname",
+            &[&excluded],
+        )
+        .await
+        .context("query ts templates")?;
+
+    let mut templates = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("nspname");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+        templates.push(TsTemplateInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("tmplname").to_string(),
+            init_func: row.get::<_, &str>("init_func").to_string(),
+            init_schema: row.get::<_, &str>("init_schema").to_string(),
+            lexize_func: row.get::<_, &str>("lexize_func").to_string(),
+            lexize_schema: row.get::<_, &str>("lexize_schema").to_string(),
+        });
+    }
+    Ok(templates)
+}
+
+/// Query text search parsers from the catalog.
+pub async fn get_ts_parsers(client: &Client, opts: &DumpOptions) -> Result<Vec<TsParserInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname,
+                    p.prsname,
+                    sf.proname AS start_func,
+                    sn.nspname AS start_schema,
+                    gf.proname AS gettoken_func,
+                    gn.nspname AS gettoken_schema,
+                    ef.proname AS end_func,
+                    en.nspname AS end_schema,
+                    lf.proname AS lextypes_func,
+                    ln.nspname AS lextypes_schema,
+                    COALESCE(hf.proname, '') AS headline_func,
+                    COALESCE(hn.nspname, '') AS headline_schema
+             FROM pg_catalog.pg_ts_parser p
+             JOIN pg_catalog.pg_namespace n ON n.oid = p.prsnamespace
+             JOIN pg_catalog.pg_proc sf ON sf.oid = p.prsstart
+             JOIN pg_catalog.pg_namespace sn ON sn.oid = sf.pronamespace
+             JOIN pg_catalog.pg_proc gf ON gf.oid = p.prstoken
+             JOIN pg_catalog.pg_namespace gn ON gn.oid = gf.pronamespace
+             JOIN pg_catalog.pg_proc ef ON ef.oid = p.prsend
+             JOIN pg_catalog.pg_namespace en ON en.oid = ef.pronamespace
+             JOIN pg_catalog.pg_proc lf ON lf.oid = p.prslextype
+             JOIN pg_catalog.pg_namespace ln ON ln.oid = lf.pronamespace
+             LEFT JOIN pg_catalog.pg_proc hf ON hf.oid = p.prsheadline
+             LEFT JOIN pg_catalog.pg_namespace hn ON hn.oid = hf.pronamespace
+             WHERE n.nspname != all($1)
+             ORDER BY n.nspname, p.prsname",
+            &[&excluded],
+        )
+        .await
+        .context("query ts parsers")?;
+
+    let mut parsers = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("nspname");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+        parsers.push(TsParserInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("prsname").to_string(),
+            start_func: row.get::<_, &str>("start_func").to_string(),
+            start_schema: row.get::<_, &str>("start_schema").to_string(),
+            gettoken_func: row.get::<_, &str>("gettoken_func").to_string(),
+            gettoken_schema: row.get::<_, &str>("gettoken_schema").to_string(),
+            end_func: row.get::<_, &str>("end_func").to_string(),
+            end_schema: row.get::<_, &str>("end_schema").to_string(),
+            lextypes_func: row.get::<_, &str>("lextypes_func").to_string(),
+            lextypes_schema: row.get::<_, &str>("lextypes_schema").to_string(),
+            headline_func: row.get::<_, &str>("headline_func").to_string(),
+            headline_schema: row.get::<_, &str>("headline_schema").to_string(),
+        });
+    }
+    Ok(parsers)
+}
+
+/// Query text search dictionaries from the catalog.
+pub async fn get_ts_dicts(client: &Client, opts: &DumpOptions) -> Result<Vec<TsDictInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname,
+                    d.dictname,
+                    r.rolname AS owner,
+                    t.tmplname AS tmpl_name,
+                    tn.nspname AS tmpl_schema,
+                    COALESCE(d.dictinitoption, '') AS options
+             FROM pg_catalog.pg_ts_dict d
+             JOIN pg_catalog.pg_namespace n ON n.oid = d.dictnamespace
+             JOIN pg_catalog.pg_roles r ON r.oid = d.dictowner
+             JOIN pg_catalog.pg_ts_template t ON t.oid = d.dicttemplate
+             JOIN pg_catalog.pg_namespace tn ON tn.oid = t.tmplnamespace
+             WHERE n.nspname != all($1)
+             ORDER BY n.nspname, d.dictname",
+            &[&excluded],
+        )
+        .await
+        .context("query ts dicts")?;
+
+    let mut dicts = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("nspname");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+        dicts.push(TsDictInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("dictname").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            tmpl_name: row.get::<_, &str>("tmpl_name").to_string(),
+            tmpl_schema: row.get::<_, &str>("tmpl_schema").to_string(),
+            options: row.get::<_, &str>("options").to_string(),
+        });
+    }
+    Ok(dicts)
+}
+
+/// Query text search configurations from the catalog (including their mappings).
+pub async fn get_ts_configs(client: &Client, opts: &DumpOptions) -> Result<Vec<TsConfigInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT c.oid::bigint AS cfg_oid,
+                    n.nspname,
+                    c.cfgname,
+                    r.rolname AS owner,
+                    p.prsname AS parser_name,
+                    pn.nspname AS parser_schema,
+                    d.description AS comment
+             FROM pg_catalog.pg_ts_config c
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.cfgnamespace
+             JOIN pg_catalog.pg_roles r ON r.oid = c.cfgowner
+             JOIN pg_catalog.pg_ts_parser p ON p.oid = c.cfgparser
+             JOIN pg_catalog.pg_namespace pn ON pn.oid = p.prsnamespace
+             LEFT JOIN pg_catalog.pg_description d
+               ON d.objoid = c.oid
+              AND d.classoid = 'pg_catalog.pg_ts_config'::regclass
+             WHERE n.nspname != all($1)
+             ORDER BY n.nspname, c.cfgname",
+            &[&excluded],
+        )
+        .await
+        .context("query ts configs")?;
+
+    let mut configs = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("nspname");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+
+        let cfg_oid: i64 = row.get("cfg_oid");
+
+        // Query the parser oid for this config (needed for ts_token_type).
+        let prs_oid: i64 = {
+            let pr = client
+                .query_one(
+                    "SELECT p.oid::bigint AS prs_oid
+                     FROM pg_catalog.pg_ts_config c
+                     JOIN pg_catalog.pg_ts_parser p ON p.oid = c.cfgparser
+                     WHERE c.oid = $1::bigint::oid",
+                    &[&cfg_oid],
+                )
+                .await
+                .context("query ts config parser oid")?;
+            pr.get("prs_oid")
+        };
+
+        // Query mappings joining ts_token_type to get alias.
+        let map_rows = client
+            .query(
+                "SELECT t.alias,
+                        d.dictname,
+                        dn.nspname AS dict_schema
+                 FROM pg_catalog.pg_ts_config_map m
+                 JOIN ts_token_type($1::bigint::oid) t ON t.tokid = m.maptokentype
+                 JOIN pg_catalog.pg_ts_dict d ON d.oid = m.mapdict
+                 JOIN pg_catalog.pg_namespace dn ON dn.oid = d.dictnamespace
+                 WHERE m.mapcfg = $2::bigint::oid
+                 ORDER BY m.maptokentype, m.mapseqno",
+                &[&prs_oid, &cfg_oid],
+            )
+            .await
+            .context("query ts config mappings")?;
+
+        let mut mappings = Vec::new();
+        for mr in &map_rows {
+            let token_alias: &str = mr.get("alias");
+            let dict_name: &str = mr.get("dictname");
+            let dict_schema: &str = mr.get("dict_schema");
+            mappings.push((
+                token_alias.to_string(),
+                dict_schema.to_string(),
+                dict_name.to_string(),
+            ));
+        }
+
+        configs.push(TsConfigInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("cfgname").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            parser_name: row.get::<_, &str>("parser_name").to_string(),
+            parser_schema: row.get::<_, &str>("parser_schema").to_string(),
+            mappings,
+            comment: row.get("comment"),
+        });
+    }
+    Ok(configs)
+}
+
+/// Query access methods from the catalog.
+pub async fn get_access_methods(client: &Client) -> Result<Vec<AccessMethodInfo>> {
+    let rows = client
+        .query(
+            "SELECT am.amname,
+                    am.amtype::text AS amtype,
+                    p.proname AS handler_func,
+                    n.nspname AS handler_schema
+             FROM pg_catalog.pg_am am
+             JOIN pg_catalog.pg_proc p ON p.oid = am.amhandler
+             JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+             WHERE am.oid > 16383
+             ORDER BY am.amname",
+            &[],
+        )
+        .await
+        .context("query access methods")?;
+
+    let mut ams = Vec::new();
+    for row in &rows {
+        let amtype_str: &str = row.get("amtype");
+        let amtype = amtype_str.chars().next().unwrap_or('i');
+        ams.push(AccessMethodInfo {
+            name: row.get::<_, &str>("amname").to_string(),
+            amtype,
+            handler_func: row.get::<_, &str>("handler_func").to_string(),
+            handler_schema: row.get::<_, &str>("handler_schema").to_string(),
+        });
+    }
+    Ok(ams)
+}
+
+/// Query user-defined aggregates from the catalog.
+pub async fn get_aggregates(client: &Client, opts: &DumpOptions) -> Result<Vec<AggregateInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname,
+                    p.proname,
+                    pg_catalog.pg_get_function_arguments(p.oid) AS args,
+                    tf.proname AS transfn,
+                    tn.nspname AS transfn_schema,
+                    pg_catalog.format_type(a.aggtranstype, NULL) AS stype,
+                    COALESCE(a.agginitval, '') AS initval
+             FROM pg_catalog.pg_proc p
+             JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+             JOIN pg_catalog.pg_aggregate a ON a.aggfnoid = p.oid
+             JOIN pg_catalog.pg_proc tf ON tf.oid = a.aggtransfn
+             JOIN pg_catalog.pg_namespace tn ON tn.oid = tf.pronamespace
+             WHERE p.prokind = 'a'
+               AND n.nspname != all($1)
+             ORDER BY n.nspname, p.proname",
+            &[&excluded],
+        )
+        .await
+        .context("query aggregates")?;
+
+    let mut aggs = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("nspname");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+        let args_str: &str = row.get("args");
+        let arg_types: Vec<String> = if args_str.is_empty() {
+            Vec::new()
+        } else {
+            args_str.split(", ").map(|s| s.to_string()).collect()
+        };
+        let transfn_schema: &str = row.get("transfn_schema");
+        let transfn: &str = row.get("transfn");
+        let transfn_qualified = if transfn_schema == "pg_catalog" {
+            transfn.to_string()
+        } else {
+            format!("{}.{}", quote_ident(transfn_schema), quote_ident(transfn))
+        };
+        aggs.push(AggregateInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("proname").to_string(),
+            arg_types,
+            transfn: transfn_qualified,
+            stype: row.get::<_, &str>("stype").to_string(),
+            initcond: row.get::<_, &str>("initval").to_string(),
+        });
+    }
+    Ok(aggs)
+}
+
+/// Query user-defined casts from the catalog.
+pub async fn get_casts(client: &Client) -> Result<Vec<CastInfo>> {
+    let rows = client
+        .query(
+            "SELECT pg_catalog.format_type(c.castsource, NULL) AS source_type,
+                    pg_catalog.format_type(c.casttarget, NULL) AS target_type,
+                    c.castcontext::text AS context,
+                    c.castmethod::text AS method,
+                    COALESCE(p.proname, '') AS func_name,
+                    COALESCE(fn.nspname, '') AS func_schema
+             FROM pg_catalog.pg_cast c
+             LEFT JOIN pg_catalog.pg_proc p ON p.oid = c.castfunc
+             LEFT JOIN pg_catalog.pg_namespace fn ON fn.oid = p.pronamespace
+             WHERE c.oid > 16383
+             ORDER BY source_type, target_type",
+            &[],
+        )
+        .await
+        .context("query casts")?;
+
+    let mut casts = Vec::new();
+    for row in &rows {
+        let context_str: &str = row.get("context");
+        let context = context_str.chars().next().unwrap_or('e');
+        let method_str: &str = row.get("method");
+        let method = method_str.chars().next().unwrap_or('b');
+        casts.push(CastInfo {
+            source_type: row.get::<_, &str>("source_type").to_string(),
+            target_type: row.get::<_, &str>("target_type").to_string(),
+            context,
+            method,
+            func_name: row.get::<_, &str>("func_name").to_string(),
+            func_schema: row.get::<_, &str>("func_schema").to_string(),
+        });
+    }
+    Ok(casts)
+}
+
+/// Query user-defined collations from the catalog.
+pub async fn get_collations(client: &Client, opts: &DumpOptions) -> Result<Vec<CollationInfo>> {
+    // We only include collations in user namespaces (schema != pg_catalog),
+    // since system collations (like "C", "POSIX", ICU ones from pg_catalog) should
+    // not be re-emitted in user dumps.
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT c.collname,
+                    r.rolname AS owner,
+                    c.collprovider::text AS provider,
+                    COALESCE(c.colllocale, '') AS locale,
+                    COALESCE(c.collcollate, '') AS lc_collate,
+                    COALESCE(c.collctype, '') AS lc_ctype,
+                    n.nspname,
+                    d.description AS comment
+             FROM pg_catalog.pg_collation c
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.collnamespace
+             JOIN pg_catalog.pg_roles r ON r.oid = c.collowner
+             LEFT JOIN pg_catalog.pg_description d
+               ON d.objoid = c.oid
+              AND d.classoid = 'pg_catalog.pg_collation'::regclass
+             WHERE n.nspname != all($1)
+             ORDER BY c.collname",
+            &[&excluded],
+        )
+        .await
+        .context("query collations")?;
+
+    let mut collations = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("nspname");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+        let provider_str: &str = row.get("provider");
+        let provider = provider_str.chars().next().unwrap_or('c');
+        collations.push(CollationInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("collname").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            provider,
+            locale: row.get::<_, &str>("locale").to_string(),
+            lc_collate: row.get::<_, &str>("lc_collate").to_string(),
+            lc_ctype: row.get::<_, &str>("lc_ctype").to_string(),
+            comment: row.get("comment"),
+        });
+    }
+    Ok(collations)
+}
+
+/// Query user-defined conversions from the catalog.
+pub async fn get_conversions(client: &Client, opts: &DumpOptions) -> Result<Vec<ConversionInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname,
+                    c.conname,
+                    r.rolname AS owner,
+                    pg_catalog.pg_encoding_to_char(c.conforencoding) AS from_enc,
+                    pg_catalog.pg_encoding_to_char(c.contoencoding) AS to_enc,
+                    p.proname AS func_name,
+                    fn.nspname AS func_schema,
+                    c.condefault,
+                    d.description AS comment
+             FROM pg_catalog.pg_conversion c
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.connamespace
+             JOIN pg_catalog.pg_roles r ON r.oid = c.conowner
+             JOIN pg_catalog.pg_proc p ON p.oid = c.conproc
+             JOIN pg_catalog.pg_namespace fn ON fn.oid = p.pronamespace
+             LEFT JOIN pg_catalog.pg_description d
+               ON d.objoid = c.oid
+              AND d.classoid = 'pg_catalog.pg_conversion'::regclass
+             WHERE n.nspname != all($1)
+             ORDER BY n.nspname, c.conname",
+            &[&excluded],
+        )
+        .await
+        .context("query conversions")?;
+
+    let mut convs = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("nspname");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+        let func_schema: &str = row.get("func_schema");
+        let func_name: &str = row.get("func_name");
+        let func_qualified = if func_schema == "pg_catalog" {
+            func_name.to_string()
+        } else {
+            format!("{}.{}", quote_ident(func_schema), quote_ident(func_name))
+        };
+        convs.push(ConversionInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("conname").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            from_encoding: row.get::<_, &str>("from_enc").to_string(),
+            to_encoding: row.get::<_, &str>("to_enc").to_string(),
+            func_name: func_qualified,
+            is_default: row.get("condefault"),
+            comment: row.get("comment"),
+        });
+    }
+    Ok(convs)
+}
+
+/// Query procedural languages from the catalog.
+pub async fn get_languages(client: &Client) -> Result<Vec<LanguageInfo>> {
+    let rows = client
+        .query(
+            "SELECT l.lanname,
+                    r.rolname AS owner,
+                    l.lanpltrusted AS trusted,
+                    COALESCE(hf.proname, '') AS handler_name,
+                    COALESCE(hn.nspname, '') AS handler_schema,
+                    COALESCE(inf.proname, '') AS inline_name,
+                    COALESCE(vf.proname, '') AS validator_name
+             FROM pg_catalog.pg_language l
+             LEFT JOIN pg_catalog.pg_roles r ON r.oid = l.lanowner
+             LEFT JOIN pg_catalog.pg_proc hf ON hf.oid = l.lanplcallfoid
+             LEFT JOIN pg_catalog.pg_namespace hn ON hn.oid = hf.pronamespace
+             LEFT JOIN pg_catalog.pg_proc inf ON inf.oid = l.laninline
+             LEFT JOIN pg_catalog.pg_proc vf ON vf.oid = l.lanvalidator
+             WHERE l.lanispl = true
+               AND l.oid > 16383
+             ORDER BY l.lanname",
+            &[],
+        )
+        .await
+        .context("query languages")?;
+
+    let mut langs = Vec::new();
+    for row in &rows {
+        langs.push(LanguageInfo {
+            name: row.get::<_, &str>("lanname").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            trusted: row.get("trusted"),
+            handler_name: row.get::<_, &str>("handler_name").to_string(),
+            handler_schema: row.get::<_, &str>("handler_schema").to_string(),
+            inline_name: row.get::<_, &str>("inline_name").to_string(),
+            validator_name: row.get::<_, &str>("validator_name").to_string(),
+        });
+    }
+    Ok(langs)
+}
+
+/// Metadata for a PostgreSQL extension.
+#[derive(Debug, Clone)]
+pub struct ExtensionInfo {
+    /// Extension name.
+    pub name: String,
+    /// Schema where the extension is installed.
+    pub schema: String,
+    /// Extension version.
+    pub version: String,
+}
+
+/// Query extensions from the catalog.
+pub async fn get_extensions(client: &Client) -> Result<Vec<ExtensionInfo>> {
+    let rows = client
+        .query(
+            "SELECT e.extname    AS name,
+                    n.nspname    AS schema,
+                    e.extversion AS version
+             FROM pg_catalog.pg_extension e
+             JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
+             ORDER BY e.extname",
+            &[],
+        )
+        .await
+        .context("query extensions")?;
+
+    let mut extensions = Vec::new();
+    for row in &rows {
+        extensions.push(ExtensionInfo {
+            name: row.get::<_, &str>("name").to_string(),
+            schema: row.get::<_, &str>("schema").to_string(),
+            version: row.get::<_, &str>("version").to_string(),
+        });
+    }
+    Ok(extensions)
+}
+
+// ── End Issue-53 additions ────────────────────────────────────────────────
 
 /// Quote an SQL identifier if it needs quoting.
 pub fn quote_ident(name: &str) -> String {

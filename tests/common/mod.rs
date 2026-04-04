@@ -645,3 +645,131 @@ pub fn setup_issue51_schema() {
         }
     });
 }
+
+/// Set up issue-53 test schema: TS objects, access methods, aggregates,
+/// casts, collations, conversions, and procedural languages.
+/// Uses OnceLock to avoid poisoning.
+pub fn setup_issue53_schema() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        // Ensure dump_test schema exists.
+        setup_dump_test_schema();
+
+        let conninfo = test_conninfo("postgres");
+        let password = std::env::var("PGPASSWORD").unwrap_or_default();
+
+        // Step 1: language handler function + procedural language.
+        let sql1 = "\
+            DROP LANGUAGE IF EXISTS pltestlang CASCADE; \
+            DROP FUNCTION IF EXISTS public.pltestlang_call_handler() CASCADE; \
+            CREATE OR REPLACE FUNCTION public.pltestlang_call_handler() \
+                RETURNS language_handler \
+                LANGUAGE C AS '$libdir/plpgsql', 'plpgsql_call_handler'; \
+            CREATE PROCEDURAL LANGUAGE pltestlang \
+                HANDLER public.pltestlang_call_handler; \
+        ";
+
+        // Step 2: TS template + TS parser + TS dictionary + TS configuration.
+        let sql2 = "\
+            DROP TEXT SEARCH CONFIGURATION IF EXISTS dump_test.alt_ts_conf1 CASCADE; \
+            DROP TEXT SEARCH DICTIONARY IF EXISTS dump_test.alt_ts_dict1 CASCADE; \
+            DROP TEXT SEARCH PARSER IF EXISTS dump_test.alt_ts_prs1 CASCADE; \
+            DROP TEXT SEARCH TEMPLATE IF EXISTS dump_test.alt_ts_temp1 CASCADE; \
+            CREATE TEXT SEARCH TEMPLATE dump_test.alt_ts_temp1 ( \
+                INIT = dsimple_init, \
+                LEXIZE = dsimple_lexize \
+            ); \
+            CREATE TEXT SEARCH PARSER dump_test.alt_ts_prs1 ( \
+                START = prsd_start, \
+                GETTOKEN = prsd_nexttoken, \
+                END = prsd_end, \
+                LEXTYPES = prsd_lextype \
+            ); \
+            CREATE TEXT SEARCH DICTIONARY dump_test.alt_ts_dict1 ( \
+                TEMPLATE = dump_test.alt_ts_temp1 \
+            ); \
+            CREATE TEXT SEARCH CONFIGURATION dump_test.alt_ts_conf1 ( \
+                PARSER = dump_test.alt_ts_prs1 \
+            ); \
+            ALTER TEXT SEARCH CONFIGURATION dump_test.alt_ts_conf1 \
+                ADD MAPPING FOR word WITH dump_test.alt_ts_dict1; \
+            COMMENT ON TEXT SEARCH CONFIGURATION dump_test.alt_ts_conf1 \
+                IS 'test ts config'; \
+        ";
+
+        // Step 3: access methods.
+        let sql3 = "\
+            DROP ACCESS METHOD IF EXISTS regress_test_table_am CASCADE; \
+            DROP ACCESS METHOD IF EXISTS gist2 CASCADE; \
+            CREATE ACCESS METHOD gist2 TYPE INDEX HANDLER gisthandler; \
+            CREATE ACCESS METHOD regress_test_table_am TYPE TABLE \
+                HANDLER heap_tableam_handler; \
+            DROP TABLE IF EXISTS regress_pg_dump_table_am; \
+            CREATE TABLE regress_pg_dump_table_am (id int) \
+                USING regress_test_table_am; \
+        ";
+
+        // Step 4: aggregate.
+        let sql4 = "\
+            DROP AGGREGATE IF EXISTS dump_test.newavg(numeric) CASCADE; \
+            DROP FUNCTION IF EXISTS dump_test.sfunc1(numeric, numeric) CASCADE; \
+            CREATE OR REPLACE FUNCTION dump_test.sfunc1(numeric, numeric) \
+                RETURNS numeric AS \
+                $$ SELECT $1 + $2 $$ LANGUAGE SQL STRICT IMMUTABLE; \
+            CREATE AGGREGATE dump_test.newavg (numeric) ( \
+                sfunc = dump_test.sfunc1, \
+                stype = numeric, \
+                initcond = '0' \
+            ); \
+        ";
+
+        // Step 5: cast — use timestamptz_out (the output function) directly.
+        let sql5 = "\
+            DROP CAST IF EXISTS (timestamptz AS text); \
+            DROP FUNCTION IF EXISTS dump_test.timestamptz_to_text(timestamptz) CASCADE; \
+            CREATE OR REPLACE FUNCTION dump_test.timestamptz_to_text(timestamptz) \
+                RETURNS text LANGUAGE SQL STRICT IMMUTABLE AS \
+                $$ SELECT to_char($1, 'YYYY-MM-DD HH24:MI:SS.USOF') $$; \
+            CREATE CAST (timestamptz AS text) \
+                WITH FUNCTION dump_test.timestamptz_to_text(timestamptz) \
+                AS ASSIGNMENT; \
+        ";
+
+        // Step 6: collations.
+        let sql6 = "\
+            DROP COLLATION IF EXISTS test0; \
+            DROP COLLATION IF EXISTS icu_collation; \
+            CREATE COLLATION test0 FROM \"C\"; \
+            CREATE COLLATION icu_collation (LOCALE = 'und', PROVIDER = 'icu'); \
+            COMMENT ON COLLATION test0 IS 'test collation'; \
+        ";
+
+        // Step 7: conversion.
+        let sql7 = "\
+            DROP CONVERSION IF EXISTS dump_test.test_conversion; \
+            CREATE CONVERSION dump_test.test_conversion \
+                FOR 'EUC_JP' TO 'UTF8' FROM euc_jp_to_utf8; \
+            COMMENT ON CONVERSION dump_test.test_conversion \
+                IS 'test conversion'; \
+        ";
+
+        for (step, sql) in [sql1, sql2, sql3, sql4, sql5, sql6, sql7]
+            .iter()
+            .enumerate()
+        {
+            let mut cmd = Command::new("psql");
+            cmd.arg(&conninfo).arg("-c").arg(sql);
+            if !password.is_empty() {
+                cmd.env("PGPASSWORD", &password);
+            }
+            let output = cmd.output().expect("psql setup_issue53 failed");
+            assert!(
+                output.status.success(),
+                "setup_issue53_schema step {} failed: {}",
+                step + 1,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    });
+}

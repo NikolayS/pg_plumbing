@@ -116,6 +116,36 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     let publications = catalog::get_publications(&client)
         .await
         .context("failed to query publications")?;
+    let ts_templates = catalog::get_ts_templates(&client, opts)
+        .await
+        .context("failed to query ts templates")?;
+    let ts_parsers = catalog::get_ts_parsers(&client, opts)
+        .await
+        .context("failed to query ts parsers")?;
+    let ts_dicts = catalog::get_ts_dicts(&client, opts)
+        .await
+        .context("failed to query ts dicts")?;
+    let ts_configs = catalog::get_ts_configs(&client, opts)
+        .await
+        .context("failed to query ts configs")?;
+    let access_methods = catalog::get_access_methods(&client)
+        .await
+        .context("failed to query access methods")?;
+    let aggregates = catalog::get_aggregates(&client, opts)
+        .await
+        .context("failed to query aggregates")?;
+    let casts = catalog::get_casts(&client)
+        .await
+        .context("failed to query casts")?;
+    let collations = catalog::get_collations(&client, opts)
+        .await
+        .context("failed to query collations")?;
+    let conversions = catalog::get_conversions(&client, opts)
+        .await
+        .context("failed to query conversions")?;
+    let languages = catalog::get_languages(&client)
+        .await
+        .context("failed to query languages")?;
 
     let mut out = String::new();
 
@@ -198,6 +228,12 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
                 out.push('\n');
             }
 
+            // Emit access methods.
+            for am in &access_methods {
+                format::write_create_access_method(&mut out, am);
+                out.push('\n');
+            }
+
             // Emit foreign data wrappers.
             for fdw in &fdws {
                 format::write_create_fdw(&mut out, fdw);
@@ -209,6 +245,20 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
             for srv in &foreign_servers {
                 format::write_create_foreign_server(&mut out, srv);
                 format::write_alter_server_owner(&mut out, srv);
+                out.push('\n');
+            }
+
+            // Emit collations.
+            for col in &collations {
+                format::write_create_collation(&mut out, col);
+                format::write_alter_collation_owner(&mut out, col);
+                out.push('\n');
+            }
+
+            // Emit conversions.
+            for conv in &conversions {
+                format::write_create_conversion(&mut out, conv);
+                format::write_alter_conversion_owner(&mut out, conv);
                 out.push('\n');
             }
         }
@@ -315,6 +365,16 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
             out.push('\n');
         }
 
+        // Emit procedural languages (before functions that use them).
+        for lang in &languages {
+            if opts.clean {
+                format::write_drop_language(&mut out, lang, opts.if_exists);
+            }
+            format::write_create_language(&mut out, lang);
+            format::write_alter_language_owner(&mut out, lang);
+            out.push('\n');
+        }
+
         // Emit functions and procedures.
         for func in &functions {
             if !dumped_schema_names.is_empty()
@@ -323,6 +383,67 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
                 continue;
             }
             format::write_create_function(&mut out, func);
+            out.push('\n');
+        }
+
+        // Emit TS templates.
+        for tmpl in &ts_templates {
+            if !dumped_schema_names.is_empty()
+                && !dumped_schema_names.contains(tmpl.schema.as_str())
+            {
+                continue;
+            }
+            format::write_create_ts_template(&mut out, tmpl);
+            out.push('\n');
+        }
+
+        // Emit TS parsers.
+        for prs in &ts_parsers {
+            if !dumped_schema_names.is_empty() && !dumped_schema_names.contains(prs.schema.as_str())
+            {
+                continue;
+            }
+            format::write_create_ts_parser(&mut out, prs);
+            out.push('\n');
+        }
+
+        // Emit TS dictionaries.
+        for dict in &ts_dicts {
+            if !dumped_schema_names.is_empty()
+                && !dumped_schema_names.contains(dict.schema.as_str())
+            {
+                continue;
+            }
+            format::write_create_ts_dict(&mut out, dict);
+            format::write_alter_ts_dict_owner(&mut out, dict);
+            out.push('\n');
+        }
+
+        // Emit TS configurations.
+        for cfg in &ts_configs {
+            if !dumped_schema_names.is_empty() && !dumped_schema_names.contains(cfg.schema.as_str())
+            {
+                continue;
+            }
+            format::write_create_ts_config(&mut out, cfg);
+            format::write_alter_ts_config_owner(&mut out, cfg);
+            format::write_alter_ts_config_mappings(&mut out, cfg);
+            out.push('\n');
+        }
+
+        // Emit aggregates.
+        for agg in &aggregates {
+            if !dumped_schema_names.is_empty() && !dumped_schema_names.contains(agg.schema.as_str())
+            {
+                continue;
+            }
+            format::write_create_aggregate(&mut out, agg);
+            out.push('\n');
+        }
+
+        // Emit casts.
+        for cast in &casts {
+            format::write_create_cast(&mut out, cast);
             out.push('\n');
         }
 
@@ -496,6 +617,42 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
             .context("failed to query type comments")?;
         if !type_comments.is_empty() {
             format::write_type_comments(&mut out, &type_comments);
+            out.push('\n');
+        }
+
+        // Emit COMMENT ON COLLATION statements.
+        let mut collation_comments = false;
+        for col in &collations {
+            if col.comment.is_some() {
+                format::write_comment_on_collation(&mut out, col);
+                collation_comments = true;
+            }
+        }
+        if collation_comments {
+            out.push('\n');
+        }
+
+        // Emit COMMENT ON CONVERSION statements.
+        let mut conv_comments = false;
+        for conv in &conversions {
+            if conv.comment.is_some() {
+                format::write_comment_on_conversion(&mut out, conv);
+                conv_comments = true;
+            }
+        }
+        if conv_comments {
+            out.push('\n');
+        }
+
+        // Emit COMMENT ON TEXT SEARCH CONFIGURATION statements.
+        let mut ts_comments = false;
+        for cfg in &ts_configs {
+            if cfg.comment.is_some() {
+                format::write_ts_config_comment(&mut out, cfg);
+                ts_comments = true;
+            }
+        }
+        if ts_comments {
             out.push('\n');
         }
     }
