@@ -30,7 +30,7 @@ use super::DumpOptions;
 /// - PRIMARY KEY, UNIQUE, FOREIGN KEY, NOT NULL: emitted as
 ///   `ALTER TABLE [ONLY] <table> ADD CONSTRAINT <name> <def>;` after the
 ///   CREATE TABLE statement.  ONLY is omitted for partitioned tables.
-pub fn write_create_table(out: &mut String, table: &TableInfo) {
+pub fn write_create_table(out: &mut String, table: &TableInfo, opts: &DumpOptions) {
     let qname = table.qualified_name();
 
     out.push_str(&format!("--\n-- Name: {}; Type: TABLE\n--\n\n", table.name));
@@ -106,8 +106,11 @@ pub fn write_create_table(out: &mut String, table: &TableInfo) {
     }
 
     // Append USING clause for tables with a non-default access method.
+    // Suppressed when --no-table-access-method is set.
     if let Some(ref am) = table.am_name {
-        out.push_str(&format!("\nUSING {}", quote_ident(am)));
+        if !opts.no_table_access_method {
+            out.push_str(&format!("\nUSING {}", quote_ident(am)));
+        }
     }
 
     out.push_str(";\n");

@@ -132,7 +132,7 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
             }
 
             let mut ddl = String::new();
-            format::write_create_table(&mut ddl, table);
+            format::write_create_table(&mut ddl, table, opts);
             let ddl_file = format!("{}.ddl", table.name);
             let ddl_path = dir_path.join(&ddl_file);
             std::fs::write(&ddl_path, &ddl)
