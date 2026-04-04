@@ -207,13 +207,8 @@ fn restore_if_exists_integration() {
     // ── Case 1: --clean --if-exists on an empty database ─────────────────
     // The DROP statements will fire but the objects won't exist.
     // With --if-exists, this must succeed (no error).
-    let (_stdout, stderr, code) = crate::common::run_pg_restore(&[
-        "-d",
-        target_db,
-        "--clean",
-        "--if-exists",
-        &dump_path_str,
-    ]);
+    let (_stdout, stderr, code) =
+        crate::common::run_pg_restore(&["-d", target_db, "--clean", "--if-exists", &dump_path_str]);
     assert_eq!(
         code, 0,
         "pg_restore --clean --if-exists should succeed even when objects don't exist: {stderr}"
