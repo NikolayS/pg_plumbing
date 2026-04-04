@@ -61,6 +61,27 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
         }
     });
 
+    // Apply --role: SET ROLE before running any queries.
+    if let Some(ref role) = opts.role {
+        let set_role_sql = format!("SET ROLE {}", catalog::quote_ident(role));
+        client
+            .execute(set_role_sql.as_str(), &[])
+            .await
+            .with_context(|| format!("failed to SET ROLE {role}"))?;
+    }
+
+    // Compute section flags (mirrors dump_plain logic).
+    let (emit_schema, emit_data) = if opts.statistics_only {
+        (false, false)
+    } else {
+        match opts.section.as_deref() {
+            Some("pre-data") => (true, false),
+            Some("data") => (false, true),
+            Some("post-data") => (false, false),
+            _ => (!opts.data_only, !opts.schema_only),
+        }
+    };
+
     let tables = catalog::get_tables(&client, opts)
         .await
         .context("failed to query catalog")?;
@@ -73,7 +94,7 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
     toc.push_str(";\n");
 
     // Schema section — always single-threaded.
-    if !opts.data_only {
+    if emit_schema {
         // 1. Emit CREATE SCHEMA IF NOT EXISTS for every non-public schema first.
         let mut seen_schemas: std::collections::HashSet<String> = std::collections::HashSet::new();
         for table in &tables {
@@ -142,7 +163,7 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
     }
 
     // Data section — parallel when jobs > 1.
-    if !opts.schema_only {
+    if emit_data {
         // Build owned (idx, table, dat_file) tuples up-front for deterministic TOC order.
         // Skip partitioned parent tables (relkind='p') — they hold no rows directly.
         let data_entries: Vec<(usize, catalog::TableInfo, String)> = tables

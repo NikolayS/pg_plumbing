@@ -707,8 +707,16 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     }
 
     // Emit large objects.
+    // Large objects are a data-section object in real pg_dump (they carry content),
+    // but we also emit them (with empty data) in schema-only mode for compatibility.
+    // Guard: emit when emit_schema OR emit_data — this makes --section=data include LOs
+    // (previously they were only emitted under emit_schema, so --section=data silently
+    // dropped them).
     // Included when: no --no-large-objects AND (no schema filter OR --large-objects).
-    if emit_schema && !opts.no_large_objects && (opts.schemas.is_empty() || opts.large_objects) {
+    if (emit_schema || emit_data)
+        && !opts.no_large_objects
+        && (opts.schemas.is_empty() || opts.large_objects)
+    {
         let large_objects = catalog::get_large_objects(&client)
             .await
             .context("failed to query large objects")?;
@@ -880,6 +888,27 @@ pub async fn dump_custom(opts: &DumpOptions) -> Result<Vec<u8>> {
         }
     });
 
+    // Apply --role: SET ROLE before running any queries.
+    if let Some(ref role) = opts.role {
+        let set_role_sql = format!("SET ROLE {}", catalog::quote_ident(role));
+        client
+            .execute(set_role_sql.as_str(), &[])
+            .await
+            .with_context(|| format!("failed to SET ROLE {role}"))?;
+    }
+
+    // Compute section flags (mirrors dump_plain logic).
+    let (emit_schema, emit_data) = if opts.statistics_only {
+        (false, false)
+    } else {
+        match opts.section.as_deref() {
+            Some("pre-data") => (true, false),
+            Some("data") => (false, true),
+            Some("post-data") => (false, false),
+            _ => (!opts.data_only, !opts.schema_only),
+        }
+    };
+
     let tables = catalog::get_tables(&client, opts)
         .await
         .context("failed to query catalog")?;
@@ -889,7 +918,7 @@ pub async fn dump_custom(opts: &DumpOptions) -> Result<Vec<u8>> {
     let mut next_id = 1i32;
 
     for table in &tables {
-        if !opts.data_only {
+        if emit_schema {
             // Query sequences owned by this table's columns.
             let seq_ddls = get_sequences_for_table(&client, table).await?;
             for (seq_name, seq_ddl) in seq_ddls {
@@ -911,7 +940,7 @@ pub async fn dump_custom(opts: &DumpOptions) -> Result<Vec<u8>> {
     // Collect data: build COPY strings for each table.
     let mut table_data: Vec<(TocEntry, Vec<u8>)> = Vec::new();
 
-    if !opts.schema_only {
+    if emit_data {
         // Map namespace.tag → schema dump_id for dependencies.
         // Use qualified key to avoid collision when two schemas have same-named tables.
         let schema_id_map: std::collections::HashMap<String, i32> = schema_entries

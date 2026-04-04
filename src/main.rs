@@ -202,6 +202,13 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
         bail!("pg_dump: error: option --if-exists requires option -c/--clean");
     }
 
+    // --section must be pre-data, data, or post-data
+    if let Some(ref sec) = args.section {
+        if !matches!(sec.as_str(), "pre-data" | "data" | "post-data") {
+            bail!("pg_dump: error: unrecognized section name: \"{sec}\"");
+        }
+    }
+
     let dbname = args
         .dbname
         .as_deref()
