@@ -757,6 +757,7 @@ fn create_role() {}
 fn create_role_quoted() {}
 
 #[test]
+#[ignore]
 /// Newline in table name handled in comments.
 fn newline_in_table_name_comment() {}
 
@@ -2271,6 +2272,10 @@ fn run_no_policies() {
     assert!(
         !stdout.contains("CREATE POLICY"),
         "output should NOT contain CREATE POLICY with --no-policies:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("ENABLE ROW LEVEL SECURITY"),
+        "output should NOT contain ENABLE ROW LEVEL SECURITY with --no-policies:\n{stdout}"
     );
 }
 

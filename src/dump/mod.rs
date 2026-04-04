@@ -270,7 +270,7 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
             }
 
             // Emit ENABLE ROW LEVEL SECURITY.
-            if table.rls_enabled {
+            if table.rls_enabled && !opts.no_policies {
                 format::write_alter_table_enable_rls(&mut out, table);
             }
 
