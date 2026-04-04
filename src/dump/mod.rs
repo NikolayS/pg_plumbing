@@ -145,6 +145,21 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
         tables.iter().map(|t| t.schema.as_str()).collect();
 
     if !opts.data_only {
+        // Emit CREATE SCHEMA (and DROP SCHEMA for --clean) for full-DB or
+        // schema-filtered dumps.  Table-specific dumps (-t) skip schema DDL
+        // because the schema may not exist in the restore target.
+        if !table_filter_active {
+            for schema in &schemas {
+                // --clean: emit DROP SCHEMA before CREATE SCHEMA.
+                if opts.clean {
+                    format::write_drop_schema(&mut out, schema, opts.if_exists);
+                }
+                format::write_create_schema(&mut out, schema);
+                format::write_alter_schema_owner(&mut out, schema);
+                out.push('\n');
+            }
+        }
+
         for seq in &sequences {
             if table_filter_active {
                 // In table-filter mode, only emit sequences owned by a
@@ -166,22 +181,6 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
             format::write_create_sequence(&mut out, seq);
             out.push('\n');
             format::write_alter_sequence(&mut out, seq);
-        }
-
-        // Emit ALTER SCHEMA ... OWNER TO only for full-DB or schema-filtered
-        // dumps.  A table-specific dump (-t) must not emit schema ownership
-        // because the schema may not exist in the restore target.
-        if !table_filter_active {
-            let mut emitted_schema = false;
-            for schema in &schemas {
-                if dumped_schema_names.contains(schema.name.as_str()) {
-                    format::write_alter_schema_owner(&mut out, schema);
-                    emitted_schema = true;
-                }
-            }
-            if emitted_schema {
-                out.push('\n');
-            }
         }
     }
 

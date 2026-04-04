@@ -194,6 +194,30 @@ pub fn write_alter_table_owner(out: &mut String, table: &TableInfo) {
     ));
 }
 
+/// Write a `CREATE SCHEMA` statement.
+pub fn write_create_schema(out: &mut String, schema: &SchemaInfo) {
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: SCHEMA\n--\n\nCREATE SCHEMA {};\n",
+        schema.name,
+        quote_ident(&schema.name),
+    ));
+}
+
+/// Write a `DROP SCHEMA [IF EXISTS]` statement.
+pub fn write_drop_schema(out: &mut String, schema: &SchemaInfo, if_exists: bool) {
+    if if_exists {
+        out.push_str(&format!(
+            "DROP SCHEMA IF EXISTS {} CASCADE;\n",
+            quote_ident(&schema.name),
+        ));
+    } else {
+        out.push_str(&format!(
+            "DROP SCHEMA {} CASCADE;\n",
+            quote_ident(&schema.name),
+        ));
+    }
+}
+
 /// Write an `ALTER SCHEMA … OWNER TO …;` statement.
 pub fn write_alter_schema_owner(out: &mut String, schema: &SchemaInfo) {
     out.push_str(&format!(

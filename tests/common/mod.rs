@@ -246,6 +246,95 @@ pub fn setup_view_schema() {
     });
 }
 
+/// Set up the dump_test schema with multiple test tables.
+/// Uses OnceLock to avoid poisoning.
+pub fn setup_dump_test_schema() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        let conninfo = test_conninfo("postgres");
+        let password = std::env::var("PGPASSWORD").unwrap_or_default();
+        let sql = "\
+            CREATE SCHEMA IF NOT EXISTS dump_test;\n\
+            DROP TABLE IF EXISTS dump_test.test_inheritance_child CASCADE;\n\
+            DROP TABLE IF EXISTS dump_test.test_inheritance_parent CASCADE;\n\
+            DROP TABLE IF EXISTS dump_test.test_second_table CASCADE;\n\
+            DROP TABLE IF EXISTS dump_test.test_fourth_table_zero_col CASCADE;\n\
+            DROP TABLE IF EXISTS dump_test.test_fifth_table CASCADE;\n\
+            DROP TABLE IF EXISTS dump_test.test_sixth_table CASCADE;\n\
+            DROP TABLE IF EXISTS dump_test.test_seventh_table CASCADE;\n\
+            CREATE TABLE dump_test.test_second_table (\n\
+                id integer,\n\
+                col1 text,\n\
+                col2 text\n\
+            );\n\
+            INSERT INTO dump_test.test_second_table VALUES\n\
+                (1, 'foo', 'bar'),\n\
+                (2, 'baz', 'qux');\n\
+            CREATE TABLE dump_test.test_fourth_table_zero_col ();\n\
+            CREATE TABLE dump_test.test_fifth_table (\n\
+                id integer,\n\
+                val text\n\
+            );\n\
+            CREATE TABLE dump_test.test_sixth_table (\n\
+                id integer,\n\
+                val text\n\
+            );\n\
+            CREATE TABLE dump_test.test_seventh_table (\n\
+                id integer,\n\
+                val text\n\
+            );\n\
+            CREATE TABLE dump_test.test_inheritance_parent (\n\
+                id integer PRIMARY KEY,\n\
+                val text\n\
+            );\n\
+            CREATE TABLE dump_test.test_inheritance_child (\n\
+                extra_col integer\n\
+            ) INHERITS (dump_test.test_inheritance_parent);\n\
+            ALTER SCHEMA dump_test OWNER TO postgres;\n\
+        ";
+        let mut cmd = Command::new("psql");
+        cmd.arg(&conninfo).arg("-c").arg(sql);
+        if !password.is_empty() {
+            cmd.env("PGPASSWORD", &password);
+        }
+        let output = cmd.output().expect("psql setup_dump_test_schema failed");
+        assert!(
+            output.status.success(),
+            "setup_dump_test_schema failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    });
+}
+
+/// Set up the dump_test_second_schema (empty schema).
+/// Uses OnceLock to avoid poisoning.
+pub fn setup_dump_test_second_schema() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        let conninfo = test_conninfo("postgres");
+        let password = std::env::var("PGPASSWORD").unwrap_or_default();
+        let sql = "\
+            CREATE SCHEMA IF NOT EXISTS dump_test_second_schema;\n\
+            ALTER SCHEMA dump_test_second_schema OWNER TO postgres;\n\
+        ";
+        let mut cmd = Command::new("psql");
+        cmd.arg(&conninfo).arg("-c").arg(sql);
+        if !password.is_empty() {
+            cmd.env("PGPASSWORD", &password);
+        }
+        let output = cmd
+            .output()
+            .expect("psql setup_dump_test_second_schema failed");
+        assert!(
+            output.status.success(),
+            "setup_dump_test_second_schema failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    });
+}
+
 /// Set up the parallel-dump test schema (partitioned tables + enum type).
 /// Uses OnceLock to avoid poisoning.
 pub fn setup_parallel_test_schema() {

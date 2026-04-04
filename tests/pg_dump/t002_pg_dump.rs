@@ -107,14 +107,30 @@ fn alter_large_object_owner() {}
 fn alter_language_owner() {}
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted in dump output
 /// ALTER SCHEMA dump_test OWNER TO.
-fn alter_schema_owner() {}
+fn alter_schema_owner() {
+    crate::common::setup_dump_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-n", "dump_test", "-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER SCHEMA dump_test OWNER TO"),
+        "output should contain ALTER SCHEMA dump_test OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted in dump output
 /// ALTER SCHEMA dump_test_second_schema OWNER TO.
-fn alter_schema_second_owner() {}
+fn alter_schema_second_owner() {
+    crate::common::setup_dump_test_second_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-n", "dump_test_second_schema", "-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER SCHEMA dump_test_second_schema OWNER TO"),
+        "output should contain ALTER SCHEMA dump_test_second_schema OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
 
@@ -430,10 +446,21 @@ fn copy_test_table() {
 // stub: copy_fk_reference_test_table → see issue-26 section below
 
 #[test]
-#[ignore] // not yet implemented: needs dump_test schema with multiple test tables
-/// COPY test_second_table / test_third_table / test_fourth_table /
-/// test_fifth_table.
-fn copy_other_tables() {}
+/// COPY test_second_table / test_fourth_table_zero_col / test_fifth_table.
+fn copy_other_tables() {
+    crate::common::setup_dump_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-n", "dump_test", "-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("COPY dump_test.test_second_table"),
+        "output should contain COPY test_second_table:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("foo"),
+        "output should contain row data 'foo':\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: needs identity column table setup
@@ -499,10 +526,21 @@ fn insert_rows_per_insert() {
 }
 
 #[test]
-#[ignore] // not yet implemented: needs dump_test schema with multiple test tables
-/// INSERT INTO test_second_table / test_third_table / test_fourth_table /
-/// test_fifth_table / test_table_identity.
-fn insert_into_other_tables() {}
+/// INSERT INTO test_second_table / test_fifth_table (--inserts mode).
+fn insert_into_other_tables() {
+    crate::common::setup_dump_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-n", "dump_test", "-d", "postgres", "--inserts"]);
+    assert_eq!(code, 0, "pg_dump --inserts should succeed");
+    assert!(
+        stdout.contains("INSERT INTO dump_test.test_second_table VALUES"),
+        "output should contain INSERT INTO test_second_table:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("'foo'"),
+        "output should contain row data 'foo':\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: needs partitioned measurement table setup
@@ -817,9 +855,25 @@ fn create_subscriptions() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: CREATE SCHEMA not emitted in dump output
 /// CREATE SCHEMA public / dump_test / dump_test_second_schema.
-fn create_schemas() {}
+fn create_schemas() {
+    crate::common::setup_dump_test_schema();
+    crate::common::setup_dump_test_second_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE SCHEMA dump_test"),
+        "output should contain CREATE SCHEMA dump_test:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("CREATE SCHEMA dump_test_second_schema"),
+        "output should contain CREATE SCHEMA dump_test_second_schema:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("CREATE SCHEMA public"),
+        "output should contain CREATE SCHEMA public:\n{stdout}"
+    );
+}
 
 // ---------------------------------------------------------------
 // Module: CREATE TABLE (various)
@@ -854,9 +908,17 @@ fn create_test_table() {
 // stub: create_fk_reference_table → see issue-26 section below
 
 #[test]
-#[ignore] // not yet implemented: needs dump_test schema with test_second_table
 /// CREATE TABLE test_second_table.
-fn create_second_table() {}
+fn create_second_table() {
+    crate::common::setup_dump_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-n", "dump_test", "-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TABLE dump_test.test_second_table"),
+        "output should contain CREATE TABLE test_second_table:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: needs partitioned measurement table setup
@@ -880,14 +942,38 @@ fn partition_triggers() {}
 fn create_third_table_generated() {}
 
 #[test]
-#[ignore] // not yet implemented: needs zero-column table setup
-/// CREATE TABLE test_fourth_table_zero_col.
-fn create_fourth_table_zero_col() {}
+/// CREATE TABLE test_fourth_table_zero_col (zero-column table).
+fn create_fourth_table_zero_col() {
+    crate::common::setup_dump_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-n", "dump_test", "-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TABLE dump_test.test_fourth_table_zero_col"),
+        "output should contain CREATE TABLE test_fourth_table_zero_col:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: needs dump_test schema with multiple tables
 /// CREATE TABLE test_fifth_table / test_sixth_table / test_seventh_table.
-fn create_fifth_sixth_seventh_tables() {}
+fn create_fifth_sixth_seventh_tables() {
+    crate::common::setup_dump_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-n", "dump_test", "-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TABLE dump_test.test_fifth_table"),
+        "output should contain CREATE TABLE test_fifth_table:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("CREATE TABLE dump_test.test_sixth_table"),
+        "output should contain CREATE TABLE test_sixth_table:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("CREATE TABLE dump_test.test_seventh_table"),
+        "output should contain CREATE TABLE test_seventh_table:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: needs identity column table setup
@@ -905,9 +991,21 @@ fn create_table_generated() {}
 fn create_table_with_stats() {}
 
 #[test]
-#[ignore] // not yet implemented: needs inheritance parent/child table setup
 /// CREATE TABLE test_inheritance_parent / test_inheritance_child.
-fn create_inheritance_tables() {}
+fn create_inheritance_tables() {
+    crate::common::setup_dump_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-n", "dump_test", "-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TABLE dump_test.test_inheritance_parent"),
+        "output should contain CREATE TABLE test_inheritance_parent:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("CREATE TABLE dump_test.test_inheritance_child"),
+        "output should contain CREATE TABLE test_inheritance_child:\n{stdout}"
+    );
+}
 
 // ---------------------------------------------------------------
 // Module: Statistics objects
@@ -989,10 +1087,21 @@ fn create_view() {
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: DROP SCHEMA not emitted by --clean
-/// DROP SCHEMA public / dump_test / dump_test_second_schema appear
-/// in clean runs.
-fn drop_schemas() {}
+/// DROP SCHEMA dump_test / dump_test_second_schema appear in --clean runs.
+fn drop_schemas() {
+    crate::common::setup_dump_test_schema();
+    crate::common::setup_dump_test_second_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres", "--clean"]);
+    assert_eq!(code, 0, "pg_dump --clean should succeed");
+    assert!(
+        stdout.contains("DROP SCHEMA dump_test"),
+        "output should contain DROP SCHEMA dump_test:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("DROP SCHEMA dump_test_second_schema"),
+        "output should contain DROP SCHEMA dump_test_second_schema:\n{stdout}"
+    );
+}
 
 #[test]
 /// DROP TABLE test_table / fk_reference_test_table / test_second_table.
