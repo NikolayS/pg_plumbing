@@ -203,13 +203,14 @@ fn dir_format_shared_sequence_restore_roundtrip() {
     let count_a = crate::common::psql_query(&dest_db, "SELECT COUNT(*) FROM shared_seq_tbl_a");
     let count_b = crate::common::psql_query(&dest_db, "SELECT COUNT(*) FROM shared_seq_tbl_b");
 
-    crate::common::drop_test_db(&dest_db);
-    let _ = fs::remove_dir_all(&dump_dir);
-
+    // Assert before cleanup so artifacts are available if the test fails.
     assert!(
         status.success(),
         "pg_restore failed — likely duplicate CREATE SEQUENCE (issue #21)"
     );
     assert_eq!(count_a.trim(), "2", "shared_seq_tbl_a should have 2 rows");
     assert_eq!(count_b.trim(), "1", "shared_seq_tbl_b should have 1 row");
+
+    crate::common::drop_test_db(&dest_db);
+    let _ = fs::remove_dir_all(&dump_dir);
 }
