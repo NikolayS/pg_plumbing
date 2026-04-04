@@ -35,6 +35,8 @@ pub struct DumpOptions {
     pub exclude_schemas: Vec<String>,
     /// Tables to exclude.
     pub exclude_tables: Vec<String>,
+    /// Tables whose data should be excluded (schema dumped, data skipped).
+    pub exclude_table_data: Vec<String>,
     /// Suppress ownership statements.
     pub no_owner: bool,
     /// Suppress privilege statements.
@@ -134,8 +136,13 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
         }
 
         if !opts.schema_only {
-            format::write_table_data(&mut out, &client, table, opts).await?;
-            out.push('\n');
+            // Skip data for tables matching --exclude-table-data patterns.
+            let skip_data =
+                filter::matches_any(&opts.exclude_table_data, &table.schema, &table.name);
+            if !skip_data {
+                format::write_table_data(&mut out, &client, table, opts).await?;
+                out.push('\n');
+            }
         }
     }
 
@@ -197,20 +204,27 @@ pub async fn dump_custom(opts: &DumpOptions) -> Result<Vec<u8>> {
     let mut table_data: Vec<(TocEntry, Vec<u8>)> = Vec::new();
 
     if !opts.schema_only {
-        // Map table name → schema dump_id for dependencies.
+        // Map namespace.tag → schema dump_id for dependencies.
+        // Use qualified key to avoid collision when two schemas have same-named tables.
         let schema_id_map: std::collections::HashMap<String, i32> = schema_entries
             .iter()
-            .map(|e| (e.tag.clone(), e.dump_id))
+            .map(|e| (format!("{}.{}", e.namespace, e.tag), e.dump_id))
             .collect();
 
         for table in &tables {
+            // Skip data for tables matching --exclude-table-data patterns.
+            if filter::matches_any(&opts.exclude_table_data, &table.schema, &table.name) {
+                continue;
+            }
+
             let qname = table.qualified_name();
             let col_names: Vec<String> =
                 table.columns.iter().map(|c| quote_ident(&c.name)).collect();
             let col_list = col_names.join(", ");
             let copy_stmt = format!("COPY {qname} ({col_list}) FROM stdin;");
 
-            let deps = if let Some(&sid) = schema_id_map.get(&table.name) {
+            let qualified_key = format!("{}.{}", table.schema, table.name);
+            let deps = if let Some(&sid) = schema_id_map.get(&qualified_key) {
                 vec![sid]
             } else {
                 Vec::new()

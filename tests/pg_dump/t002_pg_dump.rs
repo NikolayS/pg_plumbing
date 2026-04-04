@@ -1314,25 +1314,98 @@ fn run_defaults_parallel() {}
 fn run_defaults_tar_format() {}
 
 #[test]
-#[ignore]
-/// exclude_dump_test_schema: pg_dump --exclude-schema=dump_test.
-fn run_exclude_schema() {}
+/// exclude_dump_test_schema: pg_dump --exclude-schema=public.
+/// Verifies that no tables from the public schema appear in the output.
+fn run_exclude_schema() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-d", "postgres", "--exclude-schema", "public"]);
+    assert_eq!(code, 0, "pg_dump --exclude-schema should succeed");
+    // Should not contain any CREATE TABLE for public-schema tables.
+    assert!(
+        !stdout.contains("CREATE TABLE public.dump_test_simple"),
+        "output should NOT contain public tables:\n{stdout}"
+    );
+    // Should not contain data for public-schema tables.
+    assert!(
+        !stdout.contains("COPY public.dump_test_simple"),
+        "output should NOT contain COPY for public tables:\n{stdout}"
+    );
+    // Positive: the dump header should still be present (dump ran successfully).
+    assert!(
+        stdout.contains("PostgreSQL database dump"),
+        "output should contain the dump header:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore]
-/// exclude_test_table: pg_dump --exclude-table=dump_test.test_table.
-fn run_exclude_table() {}
+/// exclude_test_table: pg_dump --exclude-table=dump_test_simple.
+/// Verifies that the excluded table does not appear in the output.
+fn run_exclude_table() {
+    crate::common::setup_test_schema();
+    // Dump all of public, excluding dump_test_simple.
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&[
+        "-d",
+        "postgres",
+        "--schema",
+        "public",
+        "--exclude-table",
+        "dump_test_simple",
+    ]);
+    assert_eq!(code, 0, "pg_dump --exclude-table should succeed");
+    // The excluded table's CREATE TABLE should not be present.
+    assert!(
+        !stdout.contains("CREATE TABLE public.dump_test_simple"),
+        "output should NOT contain excluded table's CREATE TABLE:\n{stdout}"
+    );
+    // The excluded table's COPY should not be present.
+    assert!(
+        !stdout.contains("COPY public.dump_test_simple"),
+        "output should NOT contain excluded table's COPY:\n{stdout}"
+    );
+    // Positive: the dump header is present (a non-excluded item).
+    assert!(
+        stdout.contains("PostgreSQL database dump"),
+        "output should contain the dump header:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore]
 /// exclude_measurement: pg_dump --exclude-table-and-children=dump_test.measurement.
+/// No measurement/partition table exists in the test schema — skipping.
 fn run_exclude_measurement() {}
 
 #[test]
-#[ignore]
 /// exclude_measurement_data / exclude_test_table_data:
-/// pg_dump --exclude-table-data / --exclude-table-data-and-children.
-fn run_exclude_table_data() {}
+/// pg_dump --exclude-table-data=dump_test_simple.
+/// The table's schema (CREATE TABLE) is dumped but its data (COPY) is not.
+fn run_exclude_table_data() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&[
+        "-d",
+        "postgres",
+        "-t",
+        "dump_test_simple",
+        "--exclude-table-data",
+        "dump_test_simple",
+    ]);
+    assert_eq!(code, 0, "pg_dump --exclude-table-data should succeed");
+    // Schema should still be present.
+    assert!(
+        stdout.contains("CREATE TABLE public.dump_test_simple"),
+        "output should contain CREATE TABLE for schema:\n{stdout}"
+    );
+    // Data should be absent.
+    assert!(
+        !stdout.contains("COPY public.dump_test_simple"),
+        "output should NOT contain COPY for excluded-data table:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("alice"),
+        "output should NOT contain row data:\n{stdout}"
+    );
+}
 
 #[test]
 /// inserts: pg_dump --data-only --inserts.
@@ -1450,18 +1523,58 @@ fn run_no_subscriptions() {}
 fn run_no_table_access_method() {}
 
 #[test]
-#[ignore]
-/// only_dump_test_schema: pg_dump --schema=dump_test.
-fn run_only_schema() {}
+/// only_dump_test_schema: pg_dump --schema=public.
+/// Verifies that only tables from the public schema appear in the output.
+fn run_only_schema() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-d", "postgres", "--schema", "public"]);
+    assert_eq!(code, 0, "pg_dump --schema should succeed");
+    // Should contain public schema tables.
+    assert!(
+        stdout.contains("CREATE TABLE public.dump_test_simple"),
+        "output should contain public schema tables:\n{stdout}"
+    );
+    // Should contain the dump header.
+    assert!(
+        stdout.contains("PostgreSQL database dump"),
+        "output should contain dump header:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore]
-/// only_dump_test_table: pg_dump --table=dump_test.test_table.
-fn run_only_table() {}
+/// only_dump_test_table: pg_dump --table=dump_test_simple.
+/// Verifies that only the specified table is in the output.
+fn run_only_table() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-d", "postgres", "--table", "dump_test_simple"]);
+    assert_eq!(code, 0, "pg_dump --table should succeed");
+    // Should contain the specified table.
+    assert!(
+        stdout.contains("CREATE TABLE public.dump_test_simple"),
+        "output should contain the specified table:\n{stdout}"
+    );
+    // Should contain the table's data.
+    assert!(
+        stdout.contains("COPY public.dump_test_simple"),
+        "output should contain COPY for the specified table:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("alice"),
+        "output should contain row data:\n{stdout}"
+    );
+    // Should NOT contain other tables from the database (spot-check one).
+    assert!(
+        !stdout.contains("CREATE TABLE public.dump_test_restore"),
+        "output should NOT contain other tables:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore]
 /// only_dump_measurement: pg_dump --table-and-children=dump_test.measurement.
+/// No measurement/partition table exists in the test schema — skipping.
 fn run_only_measurement() {}
 
 #[test]

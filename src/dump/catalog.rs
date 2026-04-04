@@ -67,7 +67,15 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
     let table_rows = if opts.tables.is_empty() {
         // Dump all user tables and partitioned tables (no system schemas).
         let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
-        excluded.extend(opts.exclude_schemas.clone());
+        // Only push literal (non-glob) patterns into the SQL != ALL() list.
+        // Glob patterns are applied in-memory below via schema_matches_any.
+        let literal_excludes: Vec<String> = opts
+            .exclude_schemas
+            .iter()
+            .filter(|p| !p.contains(['*', '?']))
+            .cloned()
+            .collect();
+        excluded.extend(literal_excludes);
 
         client
             .query(
@@ -147,23 +155,23 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
         let oid: u32 = row.get::<_, i64>("oid") as u32;
         let schema: &str = row.get("nspname");
         let name: &str = row.get("relname");
-        let relkind: i8 = row.get::<_, i8>("relkind");
         let partition_key: Option<String> = row.get("partition_key");
         let partition_bound: Option<String> = row.get("partition_bound");
         let parent_table: Option<String> = row.get("parent_table");
         let parent_schema: Option<String> = row.get("parent_schema");
 
-        // Schema inclusion filter.
-        if !opts.schemas.is_empty() && !opts.schemas.iter().any(|s| s == schema) {
+        // Schema inclusion filter (supports glob patterns).
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
             continue;
         }
-        // Table exclusion filter.
-        let fqn = format!("{schema}.{name}");
-        if opts.exclude_tables.iter().any(|t| *t == name || *t == fqn) {
+        // Schema exclusion filter (supports glob patterns).
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
             continue;
         }
-
-        let _ = relkind; // used implicitly via partition_key/partition_bound
+        // Table exclusion filter (supports glob patterns).
+        if super::filter::matches_any(&opts.exclude_tables, schema, name) {
+            continue;
+        }
 
         // Query columns for all tables — used both for DDL (regular/partitioned
         // parents) and for data dumping (partition children).
