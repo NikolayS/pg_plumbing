@@ -60,6 +60,12 @@ fn setup_shared_sequence_schema() {
         // Step 2: inject a second `deptype='a'` row so that the sequence appears
         // when querying dependencies for BOTH tables.  This is the exact condition
         // that triggers the duplicate-emission bug in dump_directory.
+        //
+        // Note: in real PostgreSQL, SEQUENCE OWNED BY table.col sets refobjsubid
+        // to the column's attnum (not 0). We use refobjsubid=0 here (table-level
+        // dependency) because get_table_sequences() does not filter on refobjsubid,
+        // so this still triggers and validates the dedup fix while keeping the
+        // test setup simpler and self-contained.
         let inject_sql = "
             INSERT INTO pg_depend (classid, objid, objsubid, refclassid, refobjid, refobjsubid, deptype)
             SELECT
