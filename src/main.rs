@@ -18,7 +18,7 @@ struct Cli {
 #[derive(clap::Subcommand, Debug)]
 enum Command {
     /// Dump a PostgreSQL database into a script file or archive.
-    PgDump(PgDumpArgs),
+    PgDump(Box<PgDumpArgs>),
     /// Restore a PostgreSQL database from an archive created by pg_dump.
     PgRestore(PgRestoreArgs),
 }
@@ -203,7 +203,7 @@ pub struct PgRestoreArgs {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::PgDump(args) => run_pg_dump(args).await,
+        Command::PgDump(args) => run_pg_dump(*args).await,
         Command::PgRestore(args) => run_pg_restore(args).await,
     }
 }
