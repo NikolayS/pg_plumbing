@@ -1670,13 +1670,15 @@ fn run_no_data_no_schema() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: cross-database reference rejection not implemented (silently returns empty dump)
+#[ignore]
+// not yet implemented: cross-database reference rejection not implemented (silently returns empty dump)
 /// pg_dump --table rejects cross-database two-part names.
 /// `pg_dump --table other_db.pg_catalog.pg_class` → error
 fn reject_cross_database_two_part() {}
 
 #[test]
-#[ignore] // not yet implemented: cross-database reference rejection not implemented (silently returns empty dump)
+#[ignore]
+// not yet implemented: cross-database reference rejection not implemented (silently returns empty dump)
 /// pg_dump --table rejects cross-database three-part names.
 /// `pg_dump --table "some.other.db".pg_catalog.pg_class` → error
 fn reject_cross_database_three_part() {}
@@ -1696,7 +1698,10 @@ fn run_defaults_no_public() {
 
     let conninfo = crate::common::test_conninfo(dbname);
     let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", &conninfo]);
-    assert_eq!(code, 0, "pg_dump of DB without public schema should succeed");
+    assert_eq!(
+        code, 0,
+        "pg_dump of DB without public schema should succeed"
+    );
     assert!(
         stdout.contains("PostgreSQL database dump"),
         "output should contain dump header:\n{stdout}"
