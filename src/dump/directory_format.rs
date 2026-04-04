@@ -156,6 +156,12 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
         if opts.jobs <= 1 {
             // Sequential path — reuse the existing single connection.
             for (_, table, dat_file) in &data_entries {
+                // Skip data for tables matching --exclude-table-data patterns.
+                if super::filter::matches_any(&opts.exclude_table_data, &table.schema, &table.name)
+                {
+                    continue;
+                }
+
                 let dat_path = dir_path.join(dat_file);
                 let mut data_buf = String::new();
                 format::write_table_data(&mut data_buf, &client, table, opts).await?;
@@ -179,6 +185,15 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
             // Spawn one task per table; each acquires a semaphore permit.
             let mut join_handles = Vec::new();
             for (idx, table, dat_file) in tables_owned {
+                // Skip data for tables matching --exclude-table-data patterns.
+                if super::filter::matches_any(
+                    &opts_arc.exclude_table_data,
+                    &table.schema,
+                    &table.name,
+                ) {
+                    continue;
+                }
+
                 let sem = Arc::clone(&semaphore);
                 let conninfo = conninfo.clone();
                 let dir_path = dir_path_owned.clone();

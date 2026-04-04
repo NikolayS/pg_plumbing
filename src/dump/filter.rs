@@ -14,40 +14,28 @@
 /// Returns `true` if `text` matches the glob `pattern`.
 ///
 /// Supports `*` (any sequence) and `?` (any single character).
+/// Uses an O(m×n) DP algorithm to avoid exponential backtracking.
 pub fn glob_match(pattern: &str, text: &str) -> bool {
     let p: Vec<char> = pattern.chars().collect();
     let t: Vec<char> = text.chars().collect();
-    glob_match_inner(&p, &t)
-}
-
-fn glob_match_inner(p: &[char], t: &[char]) -> bool {
-    match (p.first(), t.first()) {
-        // Both exhausted — match.
-        (None, None) => true,
-        // Pattern exhausted but text remains — no match.
-        (None, Some(_)) => false,
-        // `*` — try skipping zero or more characters in text.
-        (Some('*'), _) => {
-            // Skip consecutive `*` in pattern.
-            let rest_p = &p[1..];
-            // Try matching rest of pattern against every suffix of t.
-            // Start with zero consumption (skip the `*`), then one char at a time.
-            for skip in 0..=t.len() {
-                if glob_match_inner(rest_p, &t[skip..]) {
-                    return true;
-                }
-            }
-            false
+    let (m, n) = (p.len(), t.len());
+    let mut dp = vec![vec![false; n + 1]; m + 1];
+    dp[0][0] = true;
+    for i in 1..=m {
+        if p[i - 1] == '*' {
+            dp[i][0] = dp[i - 1][0];
         }
-        // `?` matches any single character.
-        (Some('?'), Some(_)) => glob_match_inner(&p[1..], &t[1..]),
-        // `?` with no text remaining — no match.
-        (Some('?'), None) => false,
-        // Literal character match.
-        (Some(pc), Some(tc)) if pc == tc => glob_match_inner(&p[1..], &t[1..]),
-        // Literal mismatch.
-        _ => false,
     }
+    for i in 1..=m {
+        for j in 1..=n {
+            dp[i][j] = match p[i - 1] {
+                '*' => dp[i - 1][j] || dp[i][j - 1],
+                '?' => dp[i - 1][j - 1],
+                c => dp[i - 1][j - 1] && c == t[j - 1],
+            };
+        }
+    }
+    dp[m][n]
 }
 
 /// Returns `true` if `name` matches any of the given patterns.

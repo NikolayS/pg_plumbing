@@ -1331,6 +1331,11 @@ fn run_exclude_schema() {
         !stdout.contains("COPY public.dump_test_simple"),
         "output should NOT contain COPY for public tables:\n{stdout}"
     );
+    // Positive: the dump header should still be present (dump ran successfully).
+    assert!(
+        stdout.contains("PostgreSQL database dump"),
+        "output should contain the dump header:\n{stdout}"
+    );
 }
 
 #[test]
@@ -1357,6 +1362,11 @@ fn run_exclude_table() {
     assert!(
         !stdout.contains("COPY public.dump_test_simple"),
         "output should NOT contain excluded table's COPY:\n{stdout}"
+    );
+    // Positive: the dump header is present (a non-excluded item).
+    assert!(
+        stdout.contains("PostgreSQL database dump"),
+        "output should contain the dump header:\n{stdout}"
     );
 }
 
