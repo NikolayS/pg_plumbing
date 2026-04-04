@@ -427,6 +427,22 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
             out.push('\n');
             format::write_alter_sequence(&mut out, seq);
         }
+
+        // Emit identity sequences (ALTER TABLE ... ADD GENERATED ... AS IDENTITY).
+        // These are emitted after tables but before data (like real pg_dump does).
+        // We filter non-identity sequences earlier; identity sequences are a separate catalog.
+        // We emit them here (before table loop) so they appear after regular sequences.
+        if !table_filter_active {
+            for iseq in &identity_sequences {
+                if !dumped_schema_names.is_empty()
+                    && !dumped_schema_names.contains(iseq.table_schema.as_str())
+                {
+                    continue;
+                }
+                format::write_alter_table_add_identity(&mut out, iseq);
+                out.push('\n');
+            }
+        }
     }
 
     for table in &tables {
