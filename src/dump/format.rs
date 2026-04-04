@@ -977,8 +977,15 @@ pub fn write_alter_table_enable_rls(out: &mut String, table: &TableInfo) {
 }
 
 /// Write `ALTER TABLE ONLY … ALTER COLUMN … SET STATISTICS N;`
+///
+/// Only emits when the statistics target is explicitly set by the user (value ≥ 0).
+/// A value of -1 means "use the system default" and must NOT be emitted.
 pub fn write_alter_column_statistics(out: &mut String, table: &TableInfo, col: &ColumnInfo) {
     if let Some(stats) = col.statistics {
+        if stats < 0 {
+            // -1 is PostgreSQL's sentinel for "use default" — skip it.
+            return;
+        }
         let qname = table.qualified_name();
         out.push_str(&format!(
             "ALTER TABLE ONLY {} ALTER COLUMN {} SET STATISTICS {};\n",

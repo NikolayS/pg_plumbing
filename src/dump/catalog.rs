@@ -667,12 +667,20 @@ async fn get_columns(client: &Client, table_oid: u32) -> Result<Vec<ColumnInfo>>
         // Parse n_distinct from attoptions (e.g. "n_distinct=5,n_distinct_inherited=5").
         let n_distinct = parse_n_distinct(attoptions);
 
+        // attstattarget = -1 means "use the system default" — treat as None so we
+        // don't emit a spurious `SET STATISTICS -1` statement.  Only Some(n) with
+        // n >= 0 represents a value explicitly set by the user.
+        let statistics = match attstattarget {
+            Some(n) if n >= 0 => Some(n),
+            _ => None,
+        };
+
         columns.push(ColumnInfo {
             name: row.get("attname"),
             type_name: row.get("type_name"),
             not_null: row.get("attnotnull"),
             default_expr: row.get("default_expr"),
-            statistics: attstattarget, // Some(n) if explicitly set, None = system default
+            statistics, // Some(n≥0) if explicitly set by user, None = system default
             storage_override,
             n_distinct,
         });
