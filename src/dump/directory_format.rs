@@ -16,6 +16,18 @@ use super::catalog;
 use super::format;
 use super::DumpOptions;
 
+/// Replace characters that are invalid or problematic in filenames with `_`.
+///
+/// Handles: `/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, space, `.`, and null bytes.
+fn sanitize_filename(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | ' ' | '.' | '\0' => '_',
+            _ => c,
+        })
+        .collect()
+}
+
 /// Dump a database in directory format.
 ///
 /// Creates `output_dir` (errors if it already exists and is non-empty),
@@ -83,8 +95,8 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
         let enum_types = get_enum_types(&client).await?;
         for (type_schema, type_name, type_ddl) in &enum_types {
             let type_key = format!("{type_schema}.{type_name}");
-            let safe_schema = type_schema.replace('.', "_");
-            let safe_name = type_name.replace('.', "_");
+            let safe_schema = sanitize_filename(type_schema);
+            let safe_name = sanitize_filename(type_name);
             let type_file = format!("{safe_schema}__{safe_name}.type.ddl");
             let type_path = dir_path.join(&type_file);
             std::fs::write(&type_path, type_ddl)
@@ -111,8 +123,8 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
                     continue; // already emitted this sequence
                 }
 
-                let safe_schema = seq_schema.replace('.', "_");
-                let safe_name = seq_name.replace('.', "_");
+                let safe_schema = sanitize_filename(seq_schema);
+                let safe_name = sanitize_filename(seq_name);
                 let seq_file = format!("{safe_schema}__{safe_name}.seq.ddl");
                 let seq_path = dir_path.join(&seq_file);
                 std::fs::write(&seq_path, seq_ddl)
