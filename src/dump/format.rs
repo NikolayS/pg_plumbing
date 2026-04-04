@@ -7,9 +7,10 @@ use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
 use super::catalog::{
-    quote_ident, ConstraintInfo, EventTriggerInfo, ExtendedStatInfo, FunctionInfo, MatviewInfo,
-    PrivilegeInfo, SchemaInfo, SequenceInfo, TableInfo, TransformInfo, TriggerInfo,
-    TypeCommentInfo, ViewInfo,
+    format_fdw_options, quote_ident, ConstraintInfo, EventTriggerInfo, ExtendedStatInfo, FdwInfo,
+    ForeignServerInfo, ForeignTableInfo, FunctionInfo, MatviewInfo, PrivilegeInfo, PublicationInfo,
+    SchemaInfo, SequenceInfo, TableInfo, TransformInfo, TriggerInfo, TypeCommentInfo,
+    UserMappingInfo, ViewInfo,
 };
 use super::DumpOptions;
 
@@ -656,6 +657,210 @@ pub fn write_type_comments(out: &mut String, comments: &[TypeCommentInfo]) {
         out.push_str(&format!(
             "COMMENT ON TYPE {} IS '{}';\n",
             c.type_name, escaped
+        ));
+    }
+}
+
+/// Write a `CREATE FOREIGN DATA WRAPPER` statement.
+pub fn write_create_fdw(out: &mut String, fdw: &FdwInfo) {
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: FOREIGN DATA WRAPPER\n--\n\n",
+        fdw.name
+    ));
+    out.push_str(&format!(
+        "CREATE FOREIGN DATA WRAPPER {}",
+        quote_ident(&fdw.name)
+    ));
+    if !fdw.handler.is_empty() {
+        out.push_str(&format!(" HANDLER {}", quote_ident(&fdw.handler)));
+    }
+    if !fdw.validator.is_empty() {
+        out.push_str(&format!(" VALIDATOR {}", quote_ident(&fdw.validator)));
+    }
+    let opts = format_fdw_options(&fdw.options);
+    if !opts.is_empty() {
+        out.push_str(&format!(" OPTIONS ({opts})"));
+    }
+    out.push_str(";\n");
+}
+
+/// Write `ALTER FOREIGN DATA WRAPPER … OWNER TO …`.
+pub fn write_alter_fdw_owner(out: &mut String, fdw: &FdwInfo) {
+    out.push_str(&format!(
+        "ALTER FOREIGN DATA WRAPPER {} OWNER TO {};\n",
+        quote_ident(&fdw.name),
+        quote_ident(&fdw.owner)
+    ));
+}
+
+/// Write a `CREATE SERVER` statement.
+pub fn write_create_foreign_server(out: &mut String, srv: &ForeignServerInfo) {
+    out.push_str(&format!("--\n-- Name: {}; Type: SERVER\n--\n\n", srv.name));
+    out.push_str(&format!("CREATE SERVER {}", quote_ident(&srv.name)));
+    if !srv.server_type.is_empty() {
+        out.push_str(&format!(" TYPE '{}'", srv.server_type));
+    }
+    if !srv.server_version.is_empty() {
+        out.push_str(&format!(" VERSION '{}'", srv.server_version));
+    }
+    out.push_str(&format!(
+        " FOREIGN DATA WRAPPER {}",
+        quote_ident(&srv.fdw_name)
+    ));
+    let opts = format_fdw_options(&srv.options);
+    if !opts.is_empty() {
+        out.push_str(&format!(" OPTIONS ({opts})"));
+    }
+    out.push_str(";\n");
+}
+
+/// Write `ALTER SERVER … OWNER TO …`.
+pub fn write_alter_server_owner(out: &mut String, srv: &ForeignServerInfo) {
+    out.push_str(&format!(
+        "ALTER SERVER {} OWNER TO {};\n",
+        quote_ident(&srv.name),
+        quote_ident(&srv.owner)
+    ));
+}
+
+/// Write a `CREATE FOREIGN TABLE` statement.
+pub fn write_create_foreign_table(out: &mut String, ft: &ForeignTableInfo) {
+    let qname = ft.qualified_name();
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: FOREIGN TABLE\n--\n\n",
+        ft.name
+    ));
+    out.push_str(&format!("CREATE FOREIGN TABLE {qname} (\n"));
+    for (i, col) in ft.columns.iter().enumerate() {
+        out.push_str(&format!("    {} {}", quote_ident(&col.name), col.type_name));
+        if col.not_null {
+            out.push_str(" NOT NULL");
+        }
+        if let Some(ref default) = col.default_expr {
+            out.push_str(&format!(" DEFAULT {default}"));
+        }
+        if i + 1 < ft.columns.len() {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+    out.push_str(&format!(")\nSERVER {};\n", quote_ident(&ft.server_name)));
+}
+
+/// Write `ALTER FOREIGN TABLE … OWNER TO …`.
+pub fn write_alter_foreign_table_owner(out: &mut String, ft: &ForeignTableInfo) {
+    let qname = ft.qualified_name();
+    out.push_str(&format!(
+        "ALTER FOREIGN TABLE {qname} OWNER TO {};\n",
+        quote_ident(&ft.owner)
+    ));
+}
+
+/// Write `ALTER FOREIGN TABLE … ALTER COLUMN … OPTIONS` for columns with FDW options.
+pub fn write_alter_foreign_table_column_options(out: &mut String, ft: &ForeignTableInfo) {
+    let qname = ft.qualified_name();
+    for col in &ft.columns {
+        if col.options_raw.is_empty() {
+            continue;
+        }
+        let formatted = format_fdw_options(&col.options_raw);
+        if !formatted.is_empty() {
+            out.push_str(&format!(
+                "ALTER FOREIGN TABLE {qname} ALTER COLUMN {} OPTIONS ({formatted});\n",
+                quote_ident(&col.name)
+            ));
+        }
+    }
+}
+
+/// Write a `CREATE USER MAPPING` statement.
+pub fn write_create_user_mapping(out: &mut String, um: &UserMappingInfo) {
+    out.push_str(&format!(
+        "--\n-- Name: USER MAPPING {} {}; Type: USER MAPPING\n--\n\n",
+        um.username, um.server_name
+    ));
+    let user_clause = if um.username == "PUBLIC" {
+        "PUBLIC".to_string()
+    } else {
+        quote_ident(&um.username)
+    };
+    out.push_str(&format!(
+        "CREATE USER MAPPING FOR {user_clause} SERVER {}",
+        quote_ident(&um.server_name)
+    ));
+    let opts = format_fdw_options(&um.options);
+    if !opts.is_empty() {
+        out.push_str(&format!(" OPTIONS ({opts})"));
+    }
+    out.push_str(";\n");
+}
+
+/// Write a `CREATE PUBLICATION` statement.
+pub fn write_create_publication(out: &mut String, pub_info: &PublicationInfo) {
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: PUBLICATION\n--\n\n",
+        pub_info.name
+    ));
+    out.push_str(&format!(
+        "CREATE PUBLICATION {}",
+        quote_ident(&pub_info.name)
+    ));
+    if pub_info.all_tables {
+        out.push_str(" FOR ALL TABLES");
+    }
+    // Emit WITH clause only if publish settings differ from defaults.
+    let all_default =
+        pub_info.pub_insert && pub_info.pub_update && pub_info.pub_delete && pub_info.pub_truncate;
+    if !all_default {
+        let mut ops = Vec::new();
+        if pub_info.pub_insert {
+            ops.push("insert");
+        }
+        if pub_info.pub_update {
+            ops.push("update");
+        }
+        if pub_info.pub_delete {
+            ops.push("delete");
+        }
+        if pub_info.pub_truncate {
+            ops.push("truncate");
+        }
+        out.push_str(&format!(" WITH (publish = '{}')", ops.join(", ")));
+    }
+    out.push_str(";\n");
+}
+
+/// Write `ALTER PUBLICATION … OWNER TO …`.
+pub fn write_alter_publication_owner(out: &mut String, pub_info: &PublicationInfo) {
+    out.push_str(&format!(
+        "ALTER PUBLICATION {} OWNER TO {};\n",
+        quote_ident(&pub_info.name),
+        quote_ident(&pub_info.owner)
+    ));
+}
+
+/// Write `ALTER PUBLICATION … ADD TABLE` and `ADD TABLES IN SCHEMA` statements.
+pub fn write_alter_publication_tables(out: &mut String, pub_info: &PublicationInfo) {
+    for table in &pub_info.tables {
+        let tqname = format!(
+            "{}.{}",
+            quote_ident(&table.schema),
+            quote_ident(&table.name)
+        );
+        out.push_str(&format!(
+            "ALTER PUBLICATION {} ADD TABLE ONLY {tqname}",
+            quote_ident(&pub_info.name)
+        ));
+        if !table.where_clause.is_empty() {
+            out.push_str(&format!(" WHERE ({})", table.where_clause));
+        }
+        out.push_str(";\n");
+    }
+    for schema in &pub_info.schemas {
+        out.push_str(&format!(
+            "ALTER PUBLICATION {} ADD TABLES IN SCHEMA {};\n",
+            quote_ident(&pub_info.name),
+            quote_ident(schema)
         ));
     }
 }

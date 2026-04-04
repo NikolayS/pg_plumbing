@@ -67,14 +67,28 @@ fn alter_role() {}
 fn alter_collation_owner() {}
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted + needs FDW object
 /// ALTER FOREIGN DATA WRAPPER dummy OWNER TO.
-fn alter_fdw_owner() {}
+fn alter_fdw_owner() {
+    crate::common::setup_issue51_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER FOREIGN DATA WRAPPER dummy OWNER TO"),
+        "output should contain ALTER FOREIGN DATA WRAPPER dummy OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted + needs foreign server
 /// ALTER SERVER s1 OWNER TO.
-fn alter_server_owner() {}
+fn alter_server_owner() {
+    crate::common::setup_issue51_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER SERVER s1 OWNER TO"),
+        "output should contain ALTER SERVER s1 OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: OWNER TO not emitted + needs PL function
@@ -92,9 +106,16 @@ fn alter_operator_family_owner() {}
 fn alter_operator_class_owner() {}
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted + needs publication
 /// ALTER PUBLICATION pub1 OWNER TO.
-fn alter_publication_owner() {}
+fn alter_publication_owner() {
+    crate::common::setup_issue51_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER PUBLICATION pub1 OWNER TO"),
+        "output should contain ALTER PUBLICATION pub1 OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: OWNER TO not emitted + needs large object
@@ -248,9 +269,22 @@ fn alter_table_disable_trigger() {
 }
 
 #[test]
-#[ignore] // not yet implemented: foreign table column options not supported
 /// ALTER FOREIGN TABLE foreign_table ALTER COLUMN c1 OPTIONS.
-fn alter_foreign_table_column_options() {}
+fn alter_foreign_table_column_options() {
+    crate::common::setup_issue51_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER FOREIGN TABLE")
+            && stdout.contains("ALTER COLUMN")
+            && stdout.contains("OPTIONS"),
+        "output should contain ALTER FOREIGN TABLE ALTER COLUMN OPTIONS:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("param1"),
+        "column options should reference param1:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: OWNER TO not emitted in dump output
@@ -286,9 +320,18 @@ fn alter_measurement_owner() {}
 fn alter_measurement_partition_owner() {}
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted + needs foreign table
 /// ALTER FOREIGN TABLE foreign_table OWNER TO.
-fn alter_foreign_table_owner() {}
+fn alter_foreign_table_owner() {
+    crate::common::setup_issue51_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER FOREIGN TABLE")
+            && stdout.contains("foreign_table")
+            && stdout.contains("OWNER TO"),
+        "output should contain ALTER FOREIGN TABLE foreign_table OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: OWNER TO not emitted + needs text search config
@@ -404,9 +447,16 @@ fn comment_on_large_object() {}
 fn comment_on_policy() {}
 
 #[test]
-#[ignore] // not yet implemented: COMMENT ON not emitted + needs publication
 /// COMMENT ON PUBLICATION pub1.
-fn comment_on_publication() {}
+fn comment_on_publication() {
+    crate::common::setup_issue51_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("COMMENT ON PUBLICATION pub1"),
+        "output should contain COMMENT ON PUBLICATION pub1:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: COMMENT ON not emitted + needs subscription
@@ -862,24 +912,80 @@ fn create_ts_dictionary() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: FDW objects not emitted + needs complex setup
 /// CREATE FOREIGN DATA WRAPPER dummy.
-fn create_fdw() {}
+fn create_fdw() {
+    crate::common::setup_issue51_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE FOREIGN DATA WRAPPER"),
+        "output should contain CREATE FOREIGN DATA WRAPPER:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("dummy"),
+        "output should reference FDW dummy:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: foreign server not emitted + needs FDW setup
 /// CREATE SERVER s1 FOREIGN DATA WRAPPER dummy.
-fn create_foreign_server() {}
+fn create_foreign_server() {
+    crate::common::setup_issue51_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE SERVER"),
+        "output should contain CREATE SERVER:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("s1"),
+        "output should reference server s1:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("FOREIGN DATA WRAPPER dummy"),
+        "server should reference FDW dummy:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: foreign table not emitted + needs FDW/server setup
 /// CREATE FOREIGN TABLE dump_test.foreign_table SERVER s1.
-fn create_foreign_table() {}
+fn create_foreign_table() {
+    crate::common::setup_issue51_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE FOREIGN TABLE"),
+        "output should contain CREATE FOREIGN TABLE:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("foreign_table"),
+        "output should reference foreign_table:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("SERVER s1"),
+        "foreign table should reference SERVER s1:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: user mapping not emitted + needs FDW/server setup
 /// CREATE USER MAPPING FOR regress_dump_test_role SERVER s1.
-fn create_user_mapping() {}
+fn create_user_mapping() {
+    crate::common::setup_issue51_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE USER MAPPING"),
+        "output should contain CREATE USER MAPPING:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("regress_dump_test_role"),
+        "user mapping should reference regress_dump_test_role:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("SERVER s1"),
+        "user mapping should reference SERVER s1:\n{stdout}"
+    );
+}
 
 // ---------------------------------------------------------------
 // Module: CREATE TRANSFORM / LANGUAGE
@@ -995,24 +1101,60 @@ fn create_property_graph() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: publication objects not emitted
-/// CREATE PUBLICATION pub1..pub10 with varying configurations.
-fn create_publications() {}
+/// CREATE PUBLICATION pub1..pub4 with varying configurations.
+fn create_publications() {
+    crate::common::setup_issue51_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE PUBLICATION"),
+        "output should contain CREATE PUBLICATION:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("pub1"),
+        "output should contain pub1:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("pub2"),
+        "output should contain pub2:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: publication objects not emitted
 /// ALTER PUBLICATION pub1 ADD TABLE ... (multiple tables).
-fn alter_publication_add_table() {}
+fn alter_publication_add_table() {
+    crate::common::setup_issue51_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER PUBLICATION") && stdout.contains("ADD TABLE"),
+        "output should contain ALTER PUBLICATION ADD TABLE:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: publication objects not emitted
 /// ALTER PUBLICATION pub3 ADD TABLES IN SCHEMA.
-fn alter_publication_add_tables_in_schema() {}
+fn alter_publication_add_tables_in_schema() {
+    crate::common::setup_issue51_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER PUBLICATION") && stdout.contains("ADD TABLES IN SCHEMA"),
+        "output should contain ALTER PUBLICATION ADD TABLES IN SCHEMA:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: publication objects not emitted
-/// ALTER PUBLICATION pub4 ADD TABLE ... WHERE (col1 > 0).
-fn alter_publication_add_table_where() {}
+/// ALTER PUBLICATION pub4 ADD TABLE ... WHERE (col1 IS NOT NULL).
+fn alter_publication_add_table_where() {
+    crate::common::setup_issue51_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER PUBLICATION") && stdout.contains("WHERE"),
+        "output should contain ALTER PUBLICATION ... WHERE:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: subscription objects not emitted
