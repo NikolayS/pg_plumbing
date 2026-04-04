@@ -1220,10 +1220,47 @@ fn run_defaults_custom_format() {
 }
 
 #[test]
-#[ignore]
 /// defaults_dir_format: pg_dump --format=directory → pg_restore round-trip.
 /// Checks directory structure (toc.dat, blobs_*.toc, *.dat[.gz]).
-fn run_defaults_dir_format() {}
+fn run_defaults_dir_format() {
+    crate::common::setup_test_schema();
+    let out_dir = "/tmp/test_dir_dump";
+    let _ = std::fs::remove_dir_all(out_dir);
+
+    // dump
+    let (_, stderr, code) = crate::common::run_pg_dump(&[
+        "-F",
+        "directory",
+        "-t",
+        "dump_test_simple",
+        "-d",
+        "postgres",
+        "-f",
+        out_dir,
+    ]);
+    assert_eq!(code, 0, "pg_dump -F directory failed: {stderr}");
+    assert!(
+        std::path::Path::new(&format!("{out_dir}/toc.dat")).exists(),
+        "toc.dat should exist"
+    );
+
+    // restore round-trip
+    let test_db = "pg_plumbing_dir_test";
+    crate::common::create_test_db(test_db);
+
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_pg_plumbing"))
+        .args(["pg-restore", "-d", test_db, out_dir])
+        .env("PGPASSWORD", "postgres")
+        .status()
+        .expect("pg_restore should run");
+    assert!(status.success(), "pg_restore of directory dump failed");
+
+    let count = crate::common::psql_query(test_db, "SELECT COUNT(*) FROM dump_test_simple");
+    assert_eq!(count.trim(), "3", "should restore 3 rows, got: {count}");
+
+    crate::common::drop_test_db(test_db);
+    let _ = std::fs::remove_dir_all(out_dir);
+}
 
 #[test]
 #[ignore]

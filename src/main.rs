@@ -161,6 +161,13 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
                 }
             }
         }
+        DumpFormat::Directory => {
+            let output_dir = args
+                .file
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("directory format requires -f/--file"))?;
+            dump::directory_format::dump_directory(&opts, output_dir).await?;
+        }
         _ => {
             let output = dump::dump_plain(&opts).await?;
             match args.file {
@@ -184,6 +191,16 @@ async fn run_pg_restore(args: PgRestoreArgs) -> Result<()> {
         None => bail!("pg_restore: no input file specified"),
     };
 
+    let opts = restore::RestoreOptions {
+        dbname,
+        clean: args.clean,
+    };
+
+    // If the path is a directory, use directory-format restore.
+    if std::path::Path::new(&filename).is_dir() {
+        return restore::restore_directory(&filename, &opts).await;
+    }
+
     let sql = if filename == "-" {
         use std::io::Read;
         let mut buf = String::new();
@@ -191,11 +208,6 @@ async fn run_pg_restore(args: PgRestoreArgs) -> Result<()> {
         buf
     } else {
         std::fs::read_to_string(&filename)?
-    };
-
-    let opts = restore::RestoreOptions {
-        dbname,
-        clean: args.clean,
     };
 
     restore::restore_plain(&sql, &opts).await

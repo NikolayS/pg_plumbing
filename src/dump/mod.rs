@@ -5,6 +5,7 @@
 
 pub mod catalog;
 pub mod custom_format;
+pub mod directory_format;
 pub mod filter;
 pub mod format;
 
