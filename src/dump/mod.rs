@@ -150,7 +150,50 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     out.push_str("-- PostgreSQL database dump complete\n");
     out.push_str("--\n\n");
 
+    // Apply --no-owner / --no-acl filters.
+    let out = apply_output_filters(&out, opts.no_owner, opts.no_privileges);
+
     Ok(out)
+}
+
+/// Filter a SQL dump string according to `--no-owner` / `--no-acl` options.
+///
+/// Each line of `sql` is tested against simple prefix patterns:
+///
+/// * `no_owner`: drops lines that begin with `ALTER … OWNER TO `.
+///   Real pg_dump emits these as single-line statements.
+/// * `no_privileges`: drops lines that begin with `GRANT ` or `REVOKE `.
+fn apply_output_filters(sql: &str, no_owner: bool, no_privileges: bool) -> String {
+    if !no_owner && !no_privileges {
+        return sql.to_string();
+    }
+    sql.lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            if no_owner && is_owner_line(trimmed) {
+                return false;
+            }
+            if no_privileges && is_privilege_line(trimmed) {
+                return false;
+            }
+            true
+        })
+        .map(|l| format!("{l}\n"))
+        .collect()
+}
+
+/// Return true for `ALTER <keyword> … OWNER TO …;` lines.
+fn is_owner_line(s: &str) -> bool {
+    if !s.starts_with("ALTER ") {
+        return false;
+    }
+    // Efficient scan: look for " OWNER TO " substring.
+    s.contains(" OWNER TO ")
+}
+
+/// Return true for `GRANT …` or `REVOKE …` lines.
+fn is_privilege_line(s: &str) -> bool {
+    s.starts_with("GRANT ") || s.starts_with("REVOKE ")
 }
 
 /// Dump a database in PostgreSQL custom archive format.
@@ -357,4 +400,66 @@ async fn get_sequences_for_table(
         result.push((seq_name.to_string(), ddl));
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::{apply_output_filters, is_owner_line, is_privilege_line};
+
+    #[test]
+    fn is_owner_line_detects_alter_owner() {
+        assert!(is_owner_line("ALTER TABLE public.foo OWNER TO postgres;"));
+        assert!(is_owner_line(
+            "ALTER SEQUENCE public.foo_id_seq OWNER TO alice;"
+        ));
+        assert!(is_owner_line("ALTER VIEW public.v OWNER TO bob;"));
+        assert!(is_owner_line("ALTER SCHEMA public OWNER TO postgres;"));
+        assert!(!is_owner_line("CREATE TABLE public.foo (id int);"));
+        assert!(!is_owner_line("GRANT SELECT ON TABLE foo TO bar;"));
+        assert!(!is_owner_line("ALTER TABLE foo ADD COLUMN bar int;"));
+    }
+
+    #[test]
+    fn is_privilege_line_detects_grant_revoke() {
+        assert!(is_privilege_line("GRANT SELECT ON TABLE foo TO bar;"));
+        assert!(is_privilege_line("REVOKE ALL ON TABLE foo FROM public;"));
+        assert!(!is_privilege_line("CREATE TABLE foo (id int);"));
+        assert!(!is_privilege_line("ALTER TABLE foo OWNER TO postgres;"));
+    }
+
+    #[test]
+    fn apply_output_filters_no_flags() {
+        let sql = "CREATE TABLE foo (id int);\nALTER TABLE foo OWNER TO postgres;\nGRANT SELECT ON foo TO bar;\n";
+        // No flags: pass through unchanged.
+        assert_eq!(apply_output_filters(sql, false, false), sql);
+    }
+
+    #[test]
+    fn apply_output_filters_no_owner() {
+        let sql = "CREATE TABLE foo (id int);\nALTER TABLE foo OWNER TO postgres;\nGRANT SELECT ON foo TO bar;\n";
+        let out = apply_output_filters(sql, true, false);
+        assert!(out.contains("CREATE TABLE"), "CREATE TABLE should remain");
+        assert!(!out.contains("OWNER TO"), "OWNER TO should be stripped");
+        assert!(out.contains("GRANT SELECT"), "GRANT should remain");
+    }
+
+    #[test]
+    fn apply_output_filters_no_privileges() {
+        let sql = "CREATE TABLE foo (id int);\nALTER TABLE foo OWNER TO postgres;\nGRANT SELECT ON foo TO bar;\nREVOKE ALL ON foo FROM public;\n";
+        let out = apply_output_filters(sql, false, true);
+        assert!(out.contains("CREATE TABLE"), "CREATE TABLE should remain");
+        assert!(out.contains("OWNER TO"), "OWNER TO should remain");
+        assert!(!out.contains("GRANT "), "GRANT should be stripped");
+        assert!(!out.contains("REVOKE "), "REVOKE should be stripped");
+    }
+
+    #[test]
+    fn apply_output_filters_both() {
+        let sql = "CREATE TABLE foo (id int);\nALTER TABLE foo OWNER TO postgres;\nGRANT SELECT ON foo TO bar;\nREVOKE ALL ON foo FROM public;\n";
+        let out = apply_output_filters(sql, true, true);
+        assert!(out.contains("CREATE TABLE"), "CREATE TABLE should remain");
+        assert!(!out.contains("OWNER TO"), "OWNER TO should be stripped");
+        assert!(!out.contains("GRANT "), "GRANT should be stripped");
+        assert!(!out.contains("REVOKE "), "REVOKE should be stripped");
+    }
 }

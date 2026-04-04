@@ -111,6 +111,14 @@ struct Cli {
     /// Include CREATE DATABASE + \connect in the output
     #[arg(short = 'C', long = "create")]
     create: bool,
+
+    /// Do not output commands to set ownership of objects
+    #[arg(short = 'O', long = "no-owner")]
+    no_owner: bool,
+
+    /// Do not output commands to set privileges (GRANT/REVOKE)
+    #[arg(short = 'x', long = "no-acl", alias = "no-privileges")]
+    no_acl: bool,
 }
 
 /// Build the version string: `pg_dump (pg_plumbing) <version>`.
@@ -284,8 +292,8 @@ fn main() {
         exclude_schemas: cli.exclude_schema.clone(),
         exclude_tables: cli.exclude_table.clone(),
         exclude_table_data: cli.exclude_table_data.clone(),
-        no_owner: false,
-        no_privileges: false,
+        no_owner: cli.no_owner,
+        no_privileges: cli.no_acl,
         jobs: cli
             .jobs
             .as_deref()
