@@ -5,6 +5,7 @@
 
 use clap::Parser;
 use pg_plumbing::restore;
+use pg_plumbing::ConnParams;
 
 /// pg_restore restores a PostgreSQL database from an archive
 /// created by pg_dump.
@@ -14,9 +15,17 @@ use pg_plumbing::restore;
 #[command(
     name = "pg_restore",
     version = pg_restore_version(),
-    about = "pg_restore restores a PostgreSQL database from an archive created by pg_dump."
+    about = "pg_restore restores a PostgreSQL database from an archive created by pg_dump.",
+    // Disable clap's automatic -h/--help short flag so that -h can be
+    // used for --host (matching PostgreSQL's pg_restore interface).
+    // --help still works via the long flag.
+    disable_help_flag = true,
 )]
 struct Cli {
+    /// Print help information
+    #[arg(long = "help", action = clap::ArgAction::Help)]
+    help: (),
+
     /// Target database name or connection string.
     #[arg(short = 'd', long = "dbname")]
     dbname: Option<String>,
@@ -76,6 +85,23 @@ struct Cli {
     /// Archive file(s) to restore (positional).
     #[arg()]
     filenames: Vec<String>,
+
+    // ---- Connection options ----
+    /// Database server host or socket directory (overrides PGHOST)
+    #[arg(short = 'h', long = "host")]
+    host: Option<String>,
+
+    /// Database server port (overrides PGPORT)
+    #[arg(short = 'p', long = "port")]
+    port: Option<String>,
+
+    /// Connect as the specified database user (overrides PGUSER)
+    #[arg(short = 'U', long = "username")]
+    username: Option<String>,
+
+    /// Force password prompt (password may also be supplied via PGPASSWORD)
+    #[arg(short = 'W', long = "password")]
+    password: Option<String>,
 }
 
 /// Build the version string: `pg_restore (pg_plumbing) <version>`.
@@ -229,13 +255,25 @@ fn main() {
     }
 
     // Require a database target.
-    let dbname = match cli.dbname {
+    let raw_dbname = match cli.dbname {
         Some(ref d) => d.clone(),
         None => {
             eprintln!("pg_restore: error: no database specified (use -d)");
             std::process::exit(1);
         }
     };
+
+    // Build connection params from CLI flags (they override env vars inside
+    // build_conninfo_with_params).
+    let conn_params = ConnParams {
+        host: cli.host.clone(),
+        port: cli.port.clone(),
+        user: cli.username.clone(),
+        password: cli.password.clone(),
+    };
+    // Resolve conninfo once; store the result as dbname so that the restore
+    // functions (which call build_conninfo internally) pass it through unchanged.
+    let dbname = pg_plumbing::build_conninfo_with_params(&raw_dbname, &conn_params);
 
     // Require a positional file.
     let filename = match cli.filenames.first() {
