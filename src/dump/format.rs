@@ -201,6 +201,17 @@ pub fn write_alter_schema_owner(out: &mut String, schema: &SchemaInfo) {
     ));
 }
 
+/// Write `COMMENT ON …` statements.
+pub fn write_comments(out: &mut String, comments: &[super::catalog::CommentInfo]) {
+    for c in comments {
+        let escaped = c.comment.replace('\'', "''");
+        out.push_str(&format!(
+            "COMMENT ON {} {} IS '{}';\n",
+            c.object_type, c.object_name, escaped
+        ));
+    }
+}
+
 /// Write table data as a raw COPY data string (rows only, no header/footer).
 ///
 /// Returns just the tab-separated rows suitable for embedding in a custom archive.

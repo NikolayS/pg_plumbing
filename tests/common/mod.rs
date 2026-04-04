@@ -81,6 +81,9 @@ pub fn setup_test_schema() {
                 ('alice', 1),\n\
                 ('bob', 2),\n\
                 ('charlie', 3);\n\
+            COMMENT ON TABLE dump_test_simple IS 'test table for pg_plumbing';\n\
+            COMMENT ON COLUMN dump_test_simple.name IS 'person name column';\n\
+            COMMENT ON SCHEMA public IS 'standard public schema';\n\
         ";
         let mut cmd = Command::new("psql");
         cmd.arg(&conninfo).arg("-c").arg(sql);

@@ -525,6 +525,87 @@ pub async fn get_constraints(client: &Client, table_oid: u32) -> Result<Vec<Cons
     Ok(constraints)
 }
 
+/// Metadata for a single comment.
+#[derive(Debug, Clone)]
+pub struct CommentInfo {
+    /// The SQL object type (TABLE, COLUMN, SCHEMA, etc.)
+    pub object_type: String,
+    /// Fully qualified object name.
+    pub object_name: String,
+    /// The comment text.
+    pub comment: String,
+}
+
+/// Query comments from pg_description and pg_shdescription.
+pub async fn get_comments(client: &Client, _opts: &DumpOptions) -> Result<Vec<CommentInfo>> {
+    let mut comments = Vec::new();
+
+    // Table and column comments from pg_description.
+    let rows = client
+        .query(
+            "SELECT
+                CASE
+                    WHEN a.attnum IS NULL THEN 'TABLE'
+                    ELSE 'COLUMN'
+                END AS object_type,
+                CASE
+                    WHEN a.attnum IS NULL THEN
+                        format('%I.%I', n.nspname, c.relname)
+                    ELSE
+                        format('%I.%I.%I', n.nspname, c.relname, a.attname)
+                END AS object_name,
+                d.description
+             FROM pg_catalog.pg_description d
+             JOIN pg_catalog.pg_class c ON c.oid = d.objoid
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             LEFT JOIN pg_catalog.pg_attribute a
+               ON a.attrelid = d.objoid AND a.attnum = d.objsubid
+             WHERE c.relkind IN ('r', 'p', 'v')
+               AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+               AND d.classoid = 'pg_catalog.pg_class'::regclass
+             ORDER BY n.nspname, c.relname, d.objsubid",
+            &[],
+        )
+        .await
+        .context("query table/column comments")?;
+
+    for row in &rows {
+        let object_type: &str = row.get("object_type");
+        let object_name: &str = row.get("object_name");
+        let comment: &str = row.get("description");
+        comments.push(CommentInfo {
+            object_type: object_type.to_string(),
+            object_name: object_name.to_string(),
+            comment: comment.to_string(),
+        });
+    }
+
+    // Schema comments from pg_description.
+    let schema_rows = client
+        .query(
+            "SELECT n.nspname, d.description
+             FROM pg_catalog.pg_description d
+             JOIN pg_catalog.pg_namespace n ON n.oid = d.objoid
+             WHERE d.classoid = 'pg_catalog.pg_namespace'::regclass
+             ORDER BY n.nspname",
+            &[],
+        )
+        .await
+        .context("query schema comments")?;
+
+    for row in &schema_rows {
+        let nspname: &str = row.get("nspname");
+        let description: &str = row.get("description");
+        comments.push(CommentInfo {
+            object_type: "SCHEMA".to_string(),
+            object_name: quote_ident(nspname),
+            comment: description.to_string(),
+        });
+    }
+
+    Ok(comments)
+}
+
 /// Quote an SQL identifier if it needs quoting.
 pub fn quote_ident(name: &str) -> String {
     // Simple heuristic: quote if not all lowercase alphanumeric/underscore,
