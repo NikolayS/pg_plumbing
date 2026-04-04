@@ -151,14 +151,6 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
     };
 
     match args.format {
-<<<<<<< HEAD
-        DumpFormat::Directory => {
-            let output_dir = args
-                .file
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("directory format requires -f/--file"))?;
-            dump::directory_format::dump_directory(&opts, output_dir).await?;
-=======
         DumpFormat::Custom => {
             let bytes = dump::dump_custom(&opts).await?;
             match args.file {
@@ -168,7 +160,13 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
                     std::io::stdout().write_all(&bytes)?;
                 }
             }
->>>>>>> origin/main
+        }
+        DumpFormat::Directory => {
+            let output_dir = args
+                .file
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("directory format requires -f/--file"))?;
+            dump::directory_format::dump_directory(&opts, output_dir).await?;
         }
         _ => {
             let output = dump::dump_plain(&opts).await?;

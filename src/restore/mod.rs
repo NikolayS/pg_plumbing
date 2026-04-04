@@ -36,7 +36,21 @@ enum SqlSegment {
     },
 }
 
-<<<<<<< HEAD
+/// Safely join a filename from an archive to a base directory.
+///
+/// Rejects absolute paths, path separators, and leading dots to prevent
+/// path traversal attacks (zip-slip style).
+fn safe_join(base: &std::path::Path, filename: &str) -> Result<std::path::PathBuf> {
+    if filename.is_empty()
+        || filename.contains('/')
+        || filename.contains('\\')
+        || filename.starts_with('.')
+    {
+        anyhow::bail!("unsafe filename in archive: {:?}", filename);
+    }
+    Ok(base.join(filename))
+}
+
 /// Restore a directory-format dump to a database.
 ///
 /// Reads `toc.dat` from `input_dir`, executes schema DDL files listed
@@ -63,7 +77,7 @@ pub async fn restore_directory(input_dir: &str, opts: &RestoreOptions) -> Result
         }
         let mut parts = line.splitn(3, ' ');
         let kind = parts.next().unwrap_or("");
-        let _qname = parts.next().unwrap_or("").to_string();
+        let qname = parts.next().unwrap_or("").to_string();
         let file = parts.next().unwrap_or("").to_string();
 
         match kind {
@@ -71,14 +85,78 @@ pub async fn restore_directory(input_dir: &str, opts: &RestoreOptions) -> Result
                 schema_files.push(file);
             }
             "DATA" => {
-                data_entries.push((_qname, file));
+                data_entries.push((qname, file));
             }
             _ => {} // ignore unknown entries
         }
     }
 
     // Connect to the database.
-=======
+    let conninfo = crate::build_conninfo(&opts.dbname);
+    let (client, connection) = tokio_postgres::connect(&conninfo, NoTls)
+        .await
+        .with_context(|| format!("failed to connect to database \"{}\"", opts.dbname))?;
+
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("connection error: {e}");
+        }
+    });
+
+    // Execute schema DDL files.
+    for ddl_file in &schema_files {
+        let ddl_path = safe_join(dir_path, ddl_file)?;
+        let ddl = std::fs::read_to_string(&ddl_path)
+            .with_context(|| format!("failed to read DDL file {ddl_file}"))?;
+        let trimmed = ddl.trim();
+        if !trimmed.is_empty() {
+            client
+                .batch_execute(trimmed)
+                .await
+                .with_context(|| format!("failed to execute DDL from {ddl_file}"))?;
+        }
+    }
+
+    // Restore data files via COPY.
+    for (qname, dat_file) in &data_entries {
+        let dat_path = safe_join(dir_path, dat_file)?;
+        let dat = std::fs::read_to_string(&dat_path)
+            .with_context(|| format!("failed to read data file {dat_file}"))?;
+
+        // Parse the COPY block from the .dat file.
+        let segments = parse_sql_segments(&dat);
+        for segment in &segments {
+            match segment {
+                SqlSegment::Statements(stmts) => {
+                    let trimmed = stmts.trim();
+                    if !trimmed.is_empty() {
+                        client
+                            .batch_execute(trimmed)
+                            .await
+                            .with_context(|| format!("failed to execute SQL from {dat_file}"))?;
+                    }
+                }
+                SqlSegment::CopyBlock { header, data } => {
+                    let sink = client
+                        .copy_in(header.as_str())
+                        .await
+                        .with_context(|| format!("failed to start COPY for {qname}"))?;
+                    let mut sink = Box::pin(sink);
+                    let data_bytes = bytes::Bytes::from(data.clone());
+                    futures_util::SinkExt::send(&mut sink, data_bytes)
+                        .await
+                        .context("failed to send COPY data")?;
+                    futures_util::SinkExt::close(&mut sink)
+                        .await
+                        .context("failed to finish COPY")?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Detect whether the given bytes start with a PGDMP custom archive header.
 pub fn is_custom_format(data: &[u8]) -> bool {
     data.starts_with(custom_format::MAGIC)
@@ -121,7 +199,6 @@ pub async fn restore_custom(data: &[u8], opts: &RestoreOptions) -> Result<()> {
         .collect();
 
     // ── Connect ────────────────────────────────────────────────────────────
->>>>>>> origin/main
     let conninfo = crate::build_conninfo(&opts.dbname);
     let (client, connection) = tokio_postgres::connect(&conninfo, NoTls)
         .await
@@ -133,55 +210,6 @@ pub async fn restore_custom(data: &[u8], opts: &RestoreOptions) -> Result<()> {
         }
     });
 
-<<<<<<< HEAD
-    // Execute schema DDL files.
-    for ddl_file in &schema_files {
-        let ddl_path = dir_path.join(ddl_file);
-        let ddl = std::fs::read_to_string(&ddl_path)
-            .with_context(|| format!("failed to read DDL file {ddl_file}"))?;
-        let trimmed = ddl.trim();
-        if !trimmed.is_empty() {
-            client
-                .batch_execute(trimmed)
-                .await
-                .with_context(|| format!("failed to execute DDL from {ddl_file}"))?;
-        }
-    }
-
-    // Restore data files via COPY.
-    for (qname, dat_file) in &data_entries {
-        let dat_path = dir_path.join(dat_file);
-        let dat = std::fs::read_to_string(&dat_path)
-            .with_context(|| format!("failed to read data file {dat_file}"))?;
-
-        // Parse the COPY block from the .dat file.
-        let segments = parse_sql_segments(&dat);
-        for segment in &segments {
-            match segment {
-                SqlSegment::Statements(stmts) => {
-                    let trimmed = stmts.trim();
-                    if !trimmed.is_empty() {
-                        client
-                            .batch_execute(trimmed)
-                            .await
-                            .with_context(|| format!("failed to execute SQL from {dat_file}"))?;
-                    }
-                }
-                SqlSegment::CopyBlock { header, data } => {
-                    let sink = client
-                        .copy_in(header.as_str())
-                        .await
-                        .with_context(|| format!("failed to start COPY for {qname}"))?;
-                    let mut sink = Box::pin(sink);
-                    let data_bytes = bytes::Bytes::from(data.clone());
-                    futures_util::SinkExt::send(&mut sink, data_bytes)
-                        .await
-                        .context("failed to send COPY data")?;
-                    futures_util::SinkExt::close(&mut sink)
-                        .await
-                        .context("failed to finish COPY")?;
-                }
-=======
     // ── Apply schema DDL ───────────────────────────────────────────────────
     if opts.clean {
         // Generate and execute DROP statements from schema DDL.
@@ -236,7 +264,6 @@ pub async fn restore_custom(data: &[u8], opts: &RestoreOptions) -> Result<()> {
                     .await
                     .context("failed to send COPY data")?;
                 sink.close().await.context("failed to finish COPY")?;
->>>>>>> origin/main
             }
         }
     }

@@ -4,11 +4,8 @@
 //! pg_dump implementation.
 
 pub mod catalog;
-<<<<<<< HEAD
-pub mod directory_format;
-=======
 pub mod custom_format;
->>>>>>> origin/main
+pub mod directory_format;
 pub mod filter;
 pub mod format;
 
