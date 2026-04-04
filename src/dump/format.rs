@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
-use super::catalog::{quote_ident, ConstraintInfo, TableInfo};
+use super::catalog::{quote_ident, ConstraintInfo, SchemaInfo, SequenceInfo, TableInfo, ViewInfo};
 use super::DumpOptions;
 
 /// Write a `CREATE TABLE` statement to the output buffer, followed by any
@@ -122,6 +122,86 @@ pub fn write_create_table(out: &mut String, table: &TableInfo) {
             con.definition
         ));
     }
+}
+
+/// Write a `CREATE SEQUENCE` statement to the output buffer.
+pub fn write_create_sequence(out: &mut String, seq: &SequenceInfo) {
+    let qname = seq.qualified_name();
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: SEQUENCE\n--\n\n",
+        seq.name
+    ));
+    out.push_str(&format!("CREATE SEQUENCE {qname}\n"));
+    out.push_str(&format!("    START WITH {}\n", seq.start_value));
+    out.push_str(&format!("    INCREMENT BY {}\n", seq.increment_by));
+    out.push_str(&format!("    MINVALUE {}\n", seq.min_value));
+    out.push_str(&format!("    MAXVALUE {}\n", seq.max_value));
+    if seq.cycle {
+        out.push_str("    CYCLE\n");
+    } else {
+        out.push_str("    NO CYCLE\n");
+    }
+    out.push_str(&format!("    CACHE {};\n", seq.cache_size));
+}
+
+/// Write `ALTER SEQUENCE … OWNED BY` statement if the sequence has an owner.
+pub fn write_alter_sequence(out: &mut String, seq: &SequenceInfo) {
+    if let (Some(ref owned_schema), Some(ref owned_table), Some(ref owned_col)) = (
+        &seq.owned_by_schema,
+        &seq.owned_by_table,
+        &seq.owned_by_column,
+    ) {
+        let qname = seq.qualified_name();
+        let owned_col_q = quote_ident(owned_col);
+        out.push_str(&format!(
+            "\n--\n-- Name: {}; Type: SEQUENCE OWNED BY\n--\n\nALTER SEQUENCE {qname} OWNED BY {}.{}.{owned_col_q};\n",
+            seq.name,
+            quote_ident(owned_schema),
+            quote_ident(owned_table),
+        ));
+    }
+}
+
+/// Write a `CREATE OR REPLACE VIEW` statement to the output buffer.
+pub fn write_create_view(out: &mut String, view: &ViewInfo) {
+    let qname = view.qualified_name();
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: VIEW\n--\n\n",
+        view.name
+    ));
+    out.push_str(&format!("CREATE OR REPLACE VIEW {qname} AS\n"));
+    let def = view.definition.trim_end();
+    out.push_str(def);
+    if !def.ends_with(';') {
+        out.push(';');
+    }
+    out.push('\n');
+}
+
+/// Write an `ALTER TABLE [ONLY] … OWNER TO …;` statement.
+///
+/// Uses `ONLY` for regular tables; omits it for partitioned tables and
+/// partition children (matching real pg_dump behaviour).
+pub fn write_alter_table_owner(out: &mut String, table: &TableInfo) {
+    let qname = table.qualified_name();
+    let only = if table.partition_key.is_none() && table.partition_bound.is_none() {
+        "ONLY "
+    } else {
+        ""
+    };
+    out.push_str(&format!(
+        "ALTER TABLE {only}{qname} OWNER TO {};\n",
+        quote_ident(&table.owner)
+    ));
+}
+
+/// Write an `ALTER SCHEMA … OWNER TO …;` statement.
+pub fn write_alter_schema_owner(out: &mut String, schema: &SchemaInfo) {
+    out.push_str(&format!(
+        "ALTER SCHEMA {} OWNER TO {};\n",
+        quote_ident(&schema.name),
+        quote_ident(&schema.owner)
+    ));
 }
 
 /// Write table data as a raw COPY data string (rows only, no header/footer).

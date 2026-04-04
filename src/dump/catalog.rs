@@ -15,6 +15,8 @@ pub struct TableInfo {
     pub schema: String,
     /// Table name.
     pub name: String,
+    /// Owner role name.
+    pub owner: String,
     /// Columns in ordinal order.
     pub columns: Vec<ColumnInfo>,
     /// Primary key constraint, if any.
@@ -68,6 +70,67 @@ impl TableInfo {
     }
 }
 
+/// Metadata for a single sequence.
+#[derive(Debug, Clone)]
+pub struct SequenceInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Sequence name.
+    pub name: String,
+    /// Start value.
+    pub start_value: i64,
+    /// Increment.
+    pub increment_by: i64,
+    /// Minimum value.
+    pub min_value: i64,
+    /// Maximum value.
+    pub max_value: i64,
+    /// Cache size.
+    pub cache_size: i64,
+    /// Whether the sequence cycles.
+    pub cycle: bool,
+    /// OWNED BY table schema (if owned by a column).
+    pub owned_by_schema: Option<String>,
+    /// OWNED BY table name (if owned by a column).
+    pub owned_by_table: Option<String>,
+    /// OWNED BY column name (if owned by a column).
+    pub owned_by_column: Option<String>,
+}
+
+impl SequenceInfo {
+    /// Fully qualified name: `schema.name`.
+    pub fn qualified_name(&self) -> String {
+        format!("{}.{}", quote_ident(&self.schema), quote_ident(&self.name))
+    }
+}
+
+/// Metadata for a single view.
+#[derive(Debug, Clone)]
+pub struct ViewInfo {
+    /// Schema name.
+    pub schema: String,
+    /// View name.
+    pub name: String,
+    /// View definition from `pg_get_viewdef`.
+    pub definition: String,
+}
+
+impl ViewInfo {
+    /// Fully qualified name: `schema.name`.
+    pub fn qualified_name(&self) -> String {
+        format!("{}.{}", quote_ident(&self.schema), quote_ident(&self.name))
+    }
+}
+
+/// Metadata for a single schema.
+#[derive(Debug, Clone)]
+pub struct SchemaInfo {
+    /// Schema name.
+    pub name: String,
+    /// Owner role name.
+    pub owner: String,
+}
+
 /// Query the catalog for tables matching the dump options.
 ///
 /// Returns both regular tables (`relkind = 'r'`) and partitioned tables
@@ -91,6 +154,7 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
                 "select c.oid::int8 as oid,
                         n.nspname,
                         c.relname,
+                        r.rolname as owner,
                         c.relkind,
                         pg_catalog.pg_get_partkeydef(c.oid) as partition_key,
                         pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_bound,
@@ -107,6 +171,7 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
                          LIMIT 1) AS parent_schema
                  from pg_catalog.pg_class c
                  join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+                 join pg_catalog.pg_roles r on r.oid = c.relowner
                  where c.relkind in ('r', 'p')
                    and n.nspname != all($1)
                  order by
@@ -128,6 +193,7 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
                     "select c.oid::int8 as oid,
                             n.nspname,
                             c.relname,
+                            r.rolname as owner,
                             c.relkind,
                             pg_catalog.pg_get_partkeydef(c.oid) as partition_key,
                             pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_bound,
@@ -145,6 +211,7 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
                      from pg_catalog.pg_class c
                      join pg_catalog.pg_namespace n
                        on n.oid = c.relnamespace
+                     join pg_catalog.pg_roles r on r.oid = c.relowner
                      where c.relkind in ('r', 'p')
                        and n.nspname = $1
                        and c.relname = $2
@@ -164,6 +231,7 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
         let oid: u32 = row.get::<_, i64>("oid") as u32;
         let schema: &str = row.get("nspname");
         let name: &str = row.get("relname");
+        let owner: &str = row.get("owner");
         let partition_key: Option<String> = row.get("partition_key");
         let partition_bound: Option<String> = row.get("partition_bound");
         let parent_table: Option<String> = row.get("parent_table");
@@ -192,6 +260,7 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
         tables.push(TableInfo {
             schema: schema.to_string(),
             name: name.to_string(),
+            owner: owner.to_string(),
             columns,
             primary_key,
             constraints,
@@ -203,6 +272,173 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
     }
 
     Ok(tables)
+}
+
+/// Query user-visible schemas (excludes system schemas) with their owners.
+pub async fn get_schemas(client: &Client, opts: &DumpOptions) -> Result<Vec<SchemaInfo>> {
+    let rows = client
+        .query(
+            "SELECT n.nspname, r.rolname AS owner
+             FROM pg_catalog.pg_namespace n
+             JOIN pg_catalog.pg_roles r ON r.oid = n.nspowner
+             WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+               AND n.nspname NOT LIKE 'pg_temp_%'
+               AND n.nspname NOT LIKE 'pg_toast_temp_%'
+             ORDER BY n.nspname",
+            &[],
+        )
+        .await
+        .context("query schemas")?;
+
+    let mut schemas = Vec::new();
+    for row in &rows {
+        let name: &str = row.get("nspname");
+        let owner: &str = row.get("owner");
+
+        // Apply schema inclusion/exclusion filters.
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, name) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, name) {
+            continue;
+        }
+
+        schemas.push(SchemaInfo {
+            name: name.to_string(),
+            owner: owner.to_string(),
+        });
+    }
+    Ok(schemas)
+}
+
+/// Query the catalog for sequences matching the dump options.
+///
+/// Returns sequences from non-system schemas, ordered by schema then name.
+/// Each sequence includes OWNED BY information (table/column) if applicable.
+pub async fn get_sequences(client: &Client, opts: &DumpOptions) -> Result<Vec<SequenceInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname AS schema_name,
+                    s.relname AS seq_name,
+                    seq.seqstart AS start_value,
+                    seq.seqincrement AS increment_by,
+                    seq.seqmin AS min_value,
+                    seq.seqmax AS max_value,
+                    seq.seqcache AS cache_size,
+                    seq.seqcycle AS cycle,
+                    t.relname AS owned_by_table,
+                    tn.nspname AS owned_by_schema,
+                    a.attname AS owned_by_column
+             FROM pg_catalog.pg_class s
+             JOIN pg_catalog.pg_namespace n ON n.oid = s.relnamespace
+             JOIN pg_catalog.pg_sequence seq ON seq.seqrelid = s.oid
+             LEFT JOIN pg_catalog.pg_depend d
+               ON d.objid = s.oid
+              AND d.classid = 'pg_catalog.pg_class'::regclass
+              AND d.refclassid = 'pg_catalog.pg_class'::regclass
+              AND d.deptype = 'a'
+             LEFT JOIN pg_catalog.pg_class t ON t.oid = d.refobjid
+             LEFT JOIN pg_catalog.pg_namespace tn ON tn.oid = t.relnamespace
+             LEFT JOIN pg_catalog.pg_attribute a
+               ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+             WHERE s.relkind = 'S'
+               AND n.nspname != all($1)
+             ORDER BY n.nspname, s.relname",
+            &[&excluded],
+        )
+        .await
+        .context("query sequences")?;
+
+    let mut sequences = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("schema_name");
+
+        // Schema inclusion filter (supports glob patterns).
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        // Schema exclusion filter (supports glob patterns).
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+
+        sequences.push(SequenceInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("seq_name").to_string(),
+            start_value: row.get("start_value"),
+            increment_by: row.get("increment_by"),
+            min_value: row.get("min_value"),
+            max_value: row.get("max_value"),
+            cache_size: row.get("cache_size"),
+            cycle: row.get("cycle"),
+            owned_by_schema: row.get("owned_by_schema"),
+            owned_by_table: row.get("owned_by_table"),
+            owned_by_column: row.get("owned_by_column"),
+        });
+    }
+
+    Ok(sequences)
+}
+
+/// Query the catalog for views matching the dump options.
+///
+/// Returns views from non-system schemas, ordered by schema then name.
+pub async fn get_views(client: &Client, opts: &DumpOptions) -> Result<Vec<ViewInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname AS schema_name,
+                    c.relname AS view_name,
+                    pg_catalog.pg_get_viewdef(c.oid, true) AS definition
+             FROM pg_catalog.pg_class c
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relkind = 'v'
+               AND n.nspname != all($1)
+             ORDER BY n.nspname, c.relname",
+            &[&excluded],
+        )
+        .await
+        .context("query views")?;
+
+    let mut views = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("schema_name");
+
+        // Schema inclusion filter (supports glob patterns).
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        // Schema exclusion filter (supports glob patterns).
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+
+        let definition: Option<String> = row.get("definition");
+        views.push(ViewInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("view_name").to_string(),
+            definition: definition.unwrap_or_default(),
+        });
+    }
+
+    Ok(views)
 }
 
 /// Parse a potentially qualified table name into (schema, name).

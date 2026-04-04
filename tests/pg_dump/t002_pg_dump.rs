@@ -117,23 +117,51 @@ fn alter_schema_owner() {}
 fn alter_schema_second_owner() {}
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted in dump output
+
 /// ALTER SCHEMA public OWNER TO.
-fn alter_schema_public_owner() {}
+fn alter_schema_public_owner() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER SCHEMA public OWNER TO"),
+        "output should contain ALTER SCHEMA public OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted in dump output
+
 /// ALTER SCHEMA public OWNER TO (without ACL changes).
-fn alter_schema_public_owner_no_acl() {}
+fn alter_schema_public_owner_no_acl() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres", "--no-acl"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER SCHEMA public OWNER TO"),
+        "output should contain ALTER SCHEMA public OWNER TO with --no-acl:\n{stdout}"
+    );
+}
 
 // ---------------------------------------------------------------
 // Module: ALTER TABLE / SEQUENCE / INDEX
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: ALTER SEQUENCE not emitted in dump output
+
 /// ALTER SEQUENCE test_table_col1_seq is dumped correctly.
-fn alter_sequence() {}
+fn alter_sequence() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER SEQUENCE"),
+        "output should contain ALTER SEQUENCE:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("dump_test_simple_id_seq"),
+        "ALTER SEQUENCE should reference dump_test_simple_id_seq:\n{stdout}"
+    );
+}
 
 #[test]
 /// ALTER TABLE ONLY test_table ADD CONSTRAINT ... PRIMARY KEY.
@@ -208,9 +236,17 @@ fn alter_table_owner() {}
 fn alter_table_enable_rls() {}
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted in dump output
+
 /// ALTER TABLE test_second_table OWNER TO.
-fn alter_second_table_owner() {}
+fn alter_second_table_owner() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER TABLE ONLY public.dump_test_simple OWNER TO"),
+        "output should contain ALTER TABLE ONLY public.dump_test_simple OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: OWNER TO not emitted in dump output
@@ -874,9 +910,21 @@ fn statistics_import() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: CREATE SEQUENCE not emitted separately
+
 /// CREATE SEQUENCE test_table_col1_seq.
-fn create_sequence() {}
+fn create_sequence() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE SEQUENCE"),
+        "output should contain CREATE SEQUENCE:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("dump_test_simple_id_seq"),
+        "CREATE SEQUENCE should reference dump_test_simple_id_seq:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: needs partitioned measurement table + index setup
@@ -894,9 +942,22 @@ fn alter_measurement_primary_key() {}
 fn alter_index_attach_partition() {}
 
 #[test]
-#[ignore] // not yet implemented: CREATE VIEW not emitted in dump output
+
 /// CREATE VIEW test_view / ALTER VIEW test_view SET DEFAULT.
-fn create_view() {}
+fn create_view() {
+    crate::common::setup_test_schema();
+    crate::common::setup_view_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE VIEW") || stdout.contains("CREATE OR REPLACE VIEW"),
+        "output should contain CREATE VIEW:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("dump_test_view"),
+        "CREATE VIEW should reference dump_test_view:\n{stdout}"
+    );
+}
 
 // ---------------------------------------------------------------
 // Module: DROP statements (--clean output)
