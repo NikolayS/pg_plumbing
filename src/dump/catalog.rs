@@ -19,6 +19,9 @@ pub struct TableInfo {
     pub columns: Vec<ColumnInfo>,
     /// Primary key constraint, if any.
     pub primary_key: Option<ConstraintInfo>,
+    /// All constraints (CHECK, UNIQUE, FOREIGN KEY, NOT NULL, PRIMARY KEY).
+    /// Used to emit `ALTER TABLE … ADD CONSTRAINT` statements after CREATE TABLE.
+    pub constraints: Vec<ConstraintInfo>,
     /// Partition key expression (e.g. `HASH (mod)`) — Some for partitioned tables.
     pub partition_key: Option<String>,
     /// Partition bound expression (e.g. `FOR VALUES WITH (MODULUS 3, REMAINDER 0)`)
@@ -50,6 +53,12 @@ pub struct ConstraintInfo {
     pub name: String,
     /// Constraint definition (e.g. `PRIMARY KEY (id)`).
     pub definition: String,
+    /// Constraint type: 'c'=CHECK, 'u'=UNIQUE, 'f'=FOREIGN KEY, 'n'=NOT NULL, 'p'=PRIMARY KEY.
+    pub contype: char,
+    /// Whether the constraint is deferrable.
+    pub deferrable: bool,
+    /// Whether the constraint is initially deferred.
+    pub deferred: bool,
 }
 
 impl TableInfo {
@@ -176,13 +185,19 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
         // Query columns for all tables — used both for DDL (regular/partitioned
         // parents) and for data dumping (partition children).
         let columns = get_columns(client, oid).await?;
-        let primary_key = get_primary_key(client, oid).await?;
+        let constraints = get_constraints(client, oid).await?;
+        // Keep backward-compat field pointing at the first PRIMARY KEY found.
+        let primary_key = constraints
+            .iter()
+            .find(|c| c.contype == 'p')
+            .cloned();
 
         tables.push(TableInfo {
             schema: schema.to_string(),
             name: name.to_string(),
             columns,
             primary_key,
+            constraints,
             partition_key: partition_key.filter(|s| !s.is_empty()),
             partition_bound: partition_bound.filter(|s| !s.is_empty()),
             parent_table,
@@ -235,25 +250,46 @@ async fn get_columns(client: &Client, table_oid: u32) -> Result<Vec<ColumnInfo>>
     Ok(columns)
 }
 
-/// Query primary key constraint for a table by OID.
-async fn get_primary_key(client: &Client, table_oid: u32) -> Result<Option<ConstraintInfo>> {
+/// Query all constraints for a table by OID.
+///
+/// Returns constraints of type: CHECK ('c'), UNIQUE ('u'), FOREIGN KEY ('f'),
+/// NOT NULL ('n'), and PRIMARY KEY ('p'), ordered by type then name.
+///
+/// Constraints inherited from a parent (coninhcount > 0 and !conislocal) are
+/// excluded — they will be emitted for the parent table only.
+pub async fn get_constraints(client: &Client, table_oid: u32) -> Result<Vec<ConstraintInfo>> {
     let oid_i64 = table_oid as i64;
     let rows = client
         .query(
-            "select conname, \
-                    pg_catalog.pg_get_constraintdef(c.oid) as condef \
-             from pg_catalog.pg_constraint c \
-             where c.conrelid = $1::bigint::oid \
-               and c.contype = 'p'",
+            "SELECT conname, \
+                    contype::text AS contype, \
+                    pg_catalog.pg_get_constraintdef(c.oid, true) AS condef, \
+                    condeferrable, \
+                    condeferred \
+             FROM pg_catalog.pg_constraint c \
+             WHERE c.conrelid = $1::bigint::oid \
+               AND c.contype IN ('c', 'u', 'f', 'n', 'p') \
+               AND (c.conislocal OR c.coninhcount = 0) \
+             ORDER BY contype, conname",
             &[&oid_i64],
         )
         .await
-        .context("query primary key")?;
+        .context("query constraints")?;
 
-    Ok(rows.first().map(|row| ConstraintInfo {
-        name: row.get("conname"),
-        definition: row.get("condef"),
-    }))
+    let mut constraints = Vec::new();
+    for row in &rows {
+        // contype was cast to text in the query; extract first char.
+        let contype_str: &str = row.get("contype");
+        let contype = contype_str.chars().next().unwrap_or('c');
+        constraints.push(ConstraintInfo {
+            name: row.get("conname"),
+            definition: row.get("condef"),
+            contype,
+            deferrable: row.get("condeferrable"),
+            deferred: row.get("condeferred"),
+        });
+    }
+    Ok(constraints)
 }
 
 /// Quote an SQL identifier if it needs quoting.

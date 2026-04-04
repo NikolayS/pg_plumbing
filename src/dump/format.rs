@@ -6,15 +6,22 @@
 use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
-use super::catalog::{quote_ident, TableInfo};
+use super::catalog::{quote_ident, ConstraintInfo, TableInfo};
 use super::DumpOptions;
 
-/// Write a `CREATE TABLE` statement to the output buffer.
+/// Write a `CREATE TABLE` statement to the output buffer, followed by any
+/// `ALTER TABLE … ADD CONSTRAINT` statements for non-inline constraints.
 ///
 /// Handles three cases:
 /// - Regular table: standard column-list CREATE TABLE.
 /// - Partitioned table: CREATE TABLE ... PARTITION BY <key>.
 /// - Partition child: CREATE TABLE <child> PARTITION OF <parent> <bound>.
+///
+/// Constraint emission rules (matching real pg_dump behaviour):
+/// - CHECK constraints: emitted **inline** inside the CREATE TABLE column list.
+/// - PRIMARY KEY, UNIQUE, FOREIGN KEY, NOT NULL: emitted as
+///   `ALTER TABLE [ONLY] <table> ADD CONSTRAINT <name> <def>;` after the
+///   CREATE TABLE statement.  ONLY is omitted for partitioned tables.
 pub fn write_create_table(out: &mut String, table: &TableInfo) {
     let qname = table.qualified_name();
 
@@ -31,12 +38,27 @@ pub fn write_create_table(out: &mut String, table: &TableInfo) {
         out.push_str(&format!(
             "CREATE TABLE {qname} PARTITION OF {parent_qname} {bound};\n"
         ));
+        // Partition children inherit constraints from parent; no ALTER TABLE needed here.
         return;
     }
+
+    // Separate inline constraints (CHECK) from post-create ones (PK, UNIQUE, FK, NOT NULL).
+    let inline_checks: Vec<&ConstraintInfo> = table
+        .constraints
+        .iter()
+        .filter(|c| c.contype == 'c')
+        .collect();
+
+    let post_constraints: Vec<&ConstraintInfo> = table
+        .constraints
+        .iter()
+        .filter(|c| c.contype != 'c')
+        .collect();
 
     // Partitioned parent or regular table — write column list.
     out.push_str(&format!("CREATE TABLE {qname} (\n"));
 
+    let total_items = table.columns.len() + inline_checks.len();
     for (i, col) in table.columns.iter().enumerate() {
         out.push_str(&format!("    {} {}", quote_ident(&col.name), col.type_name));
         if col.not_null {
@@ -45,18 +67,24 @@ pub fn write_create_table(out: &mut String, table: &TableInfo) {
         if let Some(ref default) = col.default_expr {
             out.push_str(&format!(" DEFAULT {default}"));
         }
-        if i + 1 < table.columns.len() || table.primary_key.is_some() {
+        // Add trailing comma if not the last item (columns or inline CHECK constraints follow).
+        if i + 1 < total_items {
             out.push(',');
         }
         out.push('\n');
     }
 
-    if let Some(ref pk) = table.primary_key {
+    // Emit inline CHECK constraints.
+    for (i, chk) in inline_checks.iter().enumerate() {
         out.push_str(&format!(
-            "    CONSTRAINT {} {}\n",
-            quote_ident(&pk.name),
-            pk.definition
+            "    CONSTRAINT {} {}",
+            quote_ident(&chk.name),
+            chk.definition
         ));
+        if i + 1 < inline_checks.len() {
+            out.push(',');
+        }
+        out.push('\n');
     }
 
     out.push(')');
@@ -67,6 +95,33 @@ pub fn write_create_table(out: &mut String, table: &TableInfo) {
     }
 
     out.push_str(";\n");
+
+    // Emit post-create constraints as ALTER TABLE … ADD CONSTRAINT.
+    // Use ONLY for regular tables; omit ONLY for partitioned tables
+    // (matching real pg_dump behaviour).
+    let only_kw = if table.partition_key.is_some() {
+        ""
+    } else {
+        "ONLY "
+    };
+
+    for con in &post_constraints {
+        let con_type_label = match con.contype {
+            'f' => "FK CONSTRAINT",
+            'p' => "CONSTRAINT",
+            'u' => "CONSTRAINT",
+            'n' => "CONSTRAINT",
+            _ => "CONSTRAINT",
+        };
+        out.push_str(&format!(
+            "\n--\n-- Name: {} {}; Type: {}\n--\n\nALTER TABLE {only_kw}{qname}\n    ADD CONSTRAINT {} {};\n",
+            table.name,
+            con.name,
+            con_type_label,
+            quote_ident(&con.name),
+            con.definition
+        ));
+    }
 }
 
 /// Write table data as a raw COPY data string (rows only, no header/footer).
