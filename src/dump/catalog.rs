@@ -19,6 +19,13 @@ pub struct TableInfo {
     pub columns: Vec<ColumnInfo>,
     /// Primary key constraint, if any.
     pub primary_key: Option<ConstraintInfo>,
+    /// Partition key expression (e.g. `HASH (mod)`) — Some for partitioned tables.
+    pub partition_key: Option<String>,
+    /// Partition bound expression (e.g. `FOR VALUES WITH (MODULUS 3, REMAINDER 0)`)
+    /// — Some for partition child tables.
+    pub partition_bound: Option<String>,
+    /// Name of the parent partitioned table — Some for partition children.
+    pub parent_table: Option<String>,
 }
 
 /// Metadata for a single column.
@@ -51,20 +58,37 @@ impl TableInfo {
 }
 
 /// Query the catalog for tables matching the dump options.
+///
+/// Returns both regular tables (`relkind = 'r'`) and partitioned tables
+/// (`relkind = 'p'`), ordered so that parent tables precede their children.
 pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<TableInfo>> {
     let table_rows = if opts.tables.is_empty() {
-        // Dump all user tables (no system schemas).
+        // Dump all user tables and partitioned tables (no system schemas).
         let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
         excluded.extend(opts.exclude_schemas.clone());
 
         client
             .query(
-                "select c.oid::int8 as oid, n.nspname, c.relname \
-                 from pg_catalog.pg_class c \
-                 join pg_catalog.pg_namespace n on n.oid = c.relnamespace \
-                 where c.relkind = 'r' \
-                   and n.nspname != all($1) \
-                 order by n.nspname, c.relname",
+                "select c.oid::int8 as oid,
+                        n.nspname,
+                        c.relname,
+                        c.relkind,
+                        pg_catalog.pg_get_partkeydef(c.oid) as partition_key,
+                        pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_bound,
+                        (SELECT p.relname
+                         FROM pg_catalog.pg_inherits i
+                         JOIN pg_catalog.pg_class p ON p.oid = i.inhparent
+                         WHERE i.inhrelid = c.oid
+                         LIMIT 1) AS parent_table
+                 from pg_catalog.pg_class c
+                 join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+                 where c.relkind in ('r', 'p')
+                   and n.nspname != all($1)
+                 order by
+                   -- Parent tables (partition_bound IS NULL) before children.
+                   (pg_catalog.pg_get_expr(c.relpartbound, c.oid) IS NOT NULL),
+                   n.nspname,
+                   c.relname",
                 &[&excluded],
             )
             .await
@@ -76,13 +100,23 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
             let (schema, name) = parse_qualified_name(tbl);
             let result = client
                 .query(
-                    "select c.oid::int8 as oid, n.nspname, c.relname \
-                     from pg_catalog.pg_class c \
-                     join pg_catalog.pg_namespace n \
-                       on n.oid = c.relnamespace \
-                     where c.relkind = 'r' \
-                       and n.nspname = $1 \
-                       and c.relname = $2 \
+                    "select c.oid::int8 as oid,
+                            n.nspname,
+                            c.relname,
+                            c.relkind,
+                            pg_catalog.pg_get_partkeydef(c.oid) as partition_key,
+                            pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_bound,
+                            (SELECT p.relname
+                             FROM pg_catalog.pg_inherits i
+                             JOIN pg_catalog.pg_class p ON p.oid = i.inhparent
+                             WHERE i.inhrelid = c.oid
+                             LIMIT 1) AS parent_table
+                     from pg_catalog.pg_class c
+                     join pg_catalog.pg_namespace n
+                       on n.oid = c.relnamespace
+                     where c.relkind in ('r', 'p')
+                       and n.nspname = $1
+                       and c.relname = $2
                      order by n.nspname, c.relname",
                     &[&schema, &name],
                 )
@@ -99,6 +133,10 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
         let oid: u32 = row.get::<_, i64>("oid") as u32;
         let schema: &str = row.get("nspname");
         let name: &str = row.get("relname");
+        let relkind: i8 = row.get::<_, i8>("relkind");
+        let partition_key: Option<String> = row.get("partition_key");
+        let partition_bound: Option<String> = row.get("partition_bound");
+        let parent_table: Option<String> = row.get("parent_table");
 
         // Schema inclusion filter.
         if !opts.schemas.is_empty() && !opts.schemas.iter().any(|s| s == schema) {
@@ -110,7 +148,17 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
             continue;
         }
 
-        let columns = get_columns(client, oid).await?;
+        let _ = relkind; // used implicitly via partition_key/partition_bound
+
+        // For partition children, columns are inherited — skip column query
+        // (partition child DDL uses PARTITION OF syntax, not column list).
+        let columns = if partition_bound.is_some() {
+            // Partition child — columns are inherited, but we still query them
+            // for data dumping purposes.
+            get_columns(client, oid).await?
+        } else {
+            get_columns(client, oid).await?
+        };
         let primary_key = get_primary_key(client, oid).await?;
 
         tables.push(TableInfo {
@@ -118,6 +166,9 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
             name: name.to_string(),
             columns,
             primary_key,
+            partition_key: partition_key.filter(|s| !s.is_empty()),
+            partition_bound: partition_bound.filter(|s| !s.is_empty()),
+            parent_table,
         });
     }
 

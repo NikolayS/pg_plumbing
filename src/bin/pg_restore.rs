@@ -238,17 +238,35 @@ fn main() {
         }
     };
 
-    let file_bytes = std::fs::read(&filename).unwrap_or_else(|e| {
-        eprintln!("pg_restore: could not open file \"{filename}\": {e}");
-        std::process::exit(1);
-    });
+    let jobs: usize = cli
+        .jobs
+        .as_deref()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1)
+        .max(1);
 
     let opts = restore::RestoreOptions {
         dbname,
         clean: cli.clean,
+        jobs,
     };
 
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+    // Directory format: detect before trying to read as a file.
+    if std::path::Path::new(&filename).is_dir() {
+        rt.block_on(restore::restore_directory(&filename, &opts))
+            .unwrap_or_else(|e| {
+                eprintln!("pg_restore: {e}");
+                std::process::exit(1);
+            });
+        return;
+    }
+
+    let file_bytes = std::fs::read(&filename).unwrap_or_else(|e| {
+        eprintln!("pg_restore: could not open file \"{filename}\": {e}");
+        std::process::exit(1);
+    });
 
     if restore::is_custom_format(&file_bytes) {
         rt.block_on(restore::restore_custom(&file_bytes, &opts))

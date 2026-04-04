@@ -39,6 +39,8 @@ pub struct DumpOptions {
     pub no_owner: bool,
     /// Suppress privilege statements.
     pub no_privileges: bool,
+    /// Number of parallel dump workers (1 = sequential).
+    pub jobs: usize,
 }
 
 /// Dump a database in plain SQL format.

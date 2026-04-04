@@ -8,6 +8,8 @@
 //!   - `<N>.dat`  — one plain COPY-format file per table with data
 
 use anyhow::{bail, Context, Result};
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tokio_postgres::{Client, NoTls};
 
 use super::catalog;
@@ -18,6 +20,9 @@ use super::DumpOptions;
 ///
 /// Creates `output_dir` (errors if it already exists and is non-empty),
 /// writes `toc.dat` and one `<N>.dat` per table.
+///
+/// When `opts.jobs > 1`, table data files are written in parallel using
+/// up to `opts.jobs` concurrent tokio tasks.
 pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> {
     // Create the output directory; fail if it already exists and is non-empty.
     let dir_path = std::path::Path::new(output_dir);
@@ -33,7 +38,7 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
             .with_context(|| format!("failed to create directory \"{}\"", output_dir))?;
     }
 
-    // Connect to the database.
+    // Connect to the database (for schema + sequential data path).
     let conninfo = crate::build_conninfo(&opts.dbname);
     let (client, connection) = tokio_postgres::connect(&conninfo, NoTls)
         .await
@@ -56,8 +61,36 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
     toc.push_str(&format!("; dbname: {}\n", opts.dbname));
     toc.push_str(";\n");
 
-    // Schema section.
+    // Schema section — always single-threaded.
     if !opts.data_only {
+        // 1. Emit CREATE SCHEMA IF NOT EXISTS for every non-public schema first.
+        let mut seen_schemas: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for table in &tables {
+            if table.schema != "public" && seen_schemas.insert(table.schema.clone()) {
+                let schema_ddl = format!(
+                    "CREATE SCHEMA IF NOT EXISTS {};\n",
+                    catalog::quote_ident(&table.schema)
+                );
+                let schema_file = format!("{}.schema.ddl", table.schema);
+                let schema_path = dir_path.join(&schema_file);
+                std::fs::write(&schema_path, &schema_ddl)
+                    .with_context(|| format!("failed to write {schema_file}"))?;
+                toc.push_str(&format!("SCHEMA {} {schema_file}\n", table.schema));
+            }
+        }
+
+        // 2. Emit CREATE TYPE for all enum types used by tables.
+        let enum_types = get_enum_types(&client).await?;
+        for (type_schema, type_name, type_ddl) in &enum_types {
+            let type_key = format!("{type_schema}.{type_name}");
+            let type_file = format!("{type_name}.type.ddl");
+            let type_path = dir_path.join(&type_file);
+            std::fs::write(&type_path, type_ddl)
+                .with_context(|| format!("failed to write {type_file}"))?;
+            toc.push_str(&format!("TYPE {type_key} {type_file}\n"));
+        }
+
+        // 3. Emit table DDL (partitioned parent tables before their children).
         for table in &tables {
             // Dump any sequences that this table's columns depend on first.
             let sequences = get_table_sequences(&client, table).await?;
@@ -80,20 +113,105 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
         }
     }
 
-    // Data section.
+    // Data section — parallel when jobs > 1.
     if !opts.schema_only {
-        for (idx, table) in tables.iter().enumerate() {
-            let dat_file = format!("{}.dat", idx + 1);
-            let dat_path = dir_path.join(&dat_file);
+        // Build owned (idx, table, dat_file) tuples up-front for deterministic TOC order.
+        // Skip partitioned parent tables (relkind='p') — they hold no rows directly.
+        let data_entries: Vec<(usize, catalog::TableInfo, String)> = tables
+            .into_iter()
+            .filter(|t| t.partition_key.is_none()) // skip partitioned parents
+            .enumerate()
+            .map(|(idx, t)| (idx, t, format!("{}.dat", idx + 1)))
+            .collect();
 
-            let mut data_buf = String::new();
-            format::write_table_data(&mut data_buf, &client, table, opts).await?;
+        if opts.jobs <= 1 {
+            // Sequential path — reuse the existing single connection.
+            for (_, table, dat_file) in &data_entries {
+                let dat_path = dir_path.join(dat_file);
+                let mut data_buf = String::new();
+                format::write_table_data(&mut data_buf, &client, table, opts).await?;
 
-            // Only write data file if there is actual data.
-            if !data_buf.is_empty() {
-                std::fs::write(&dat_path, &data_buf)
-                    .with_context(|| format!("failed to write {dat_file}"))?;
-                toc.push_str(&format!("DATA {} {dat_file}\n", table.qualified_name()));
+                if !data_buf.is_empty() {
+                    std::fs::write(&dat_path, &data_buf)
+                        .with_context(|| format!("failed to write {dat_file}"))?;
+                    toc.push_str(&format!("DATA {} {dat_file}\n", table.qualified_name()));
+                }
+            }
+        } else {
+            // Parallel path — spawn N tasks, each with its own DB connection.
+            let jobs = opts.jobs;
+            let conninfo = crate::build_conninfo(&opts.dbname);
+            let semaphore = Arc::new(Semaphore::new(jobs));
+            let dir_path_owned = dir_path.to_path_buf();
+            let opts_arc = Arc::new(opts.clone());
+
+            let tables_owned: Vec<(usize, catalog::TableInfo, String)> = data_entries;
+
+            // Spawn one task per table; each acquires a semaphore permit.
+            let mut join_handles = Vec::new();
+            for (idx, table, dat_file) in tables_owned {
+                let sem = Arc::clone(&semaphore);
+                let conninfo = conninfo.clone();
+                let dir_path = dir_path_owned.clone();
+                let opts_clone = Arc::clone(&opts_arc);
+
+                let handle = tokio::task::spawn(async move {
+                    let _permit = sem.acquire().await.expect("semaphore closed");
+
+                    // Each worker opens its own connection.
+                    let (worker_client, conn) = tokio_postgres::connect(&conninfo, NoTls)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "parallel worker: failed to connect for table {}",
+                                table.name
+                            )
+                        })?;
+
+                    tokio::spawn(async move {
+                        if let Err(e) = conn.await {
+                            eprintln!("parallel worker connection error: {e}");
+                        }
+                    });
+
+                    let mut data_buf = String::new();
+                    format::write_table_data(&mut data_buf, &worker_client, &table, &opts_clone)
+                        .await?;
+
+                    let wrote_data = if !data_buf.is_empty() {
+                        let dat_path = dir_path.join(&dat_file);
+                        std::fs::write(&dat_path, &data_buf)
+                            .with_context(|| format!("failed to write {dat_file}"))?;
+                        true
+                    } else {
+                        false
+                    };
+
+                    Ok::<(String, String, bool), anyhow::Error>((
+                        table.qualified_name(),
+                        dat_file,
+                        wrote_data,
+                    ))
+                });
+
+                join_handles.push((idx, handle));
+            }
+
+            // Collect results in order (by idx) so the TOC is deterministic.
+            let mut results: Vec<(usize, String, String, bool)> = Vec::new();
+            for (idx, handle) in join_handles {
+                let (qname, dat_file, wrote) = handle
+                    .await
+                    .context("parallel task panicked")?
+                    .context("parallel task failed")?;
+                results.push((idx, qname, dat_file, wrote));
+            }
+            results.sort_by_key(|(idx, _, _, _)| *idx);
+
+            for (_idx, qname, dat_file, wrote) in results {
+                if wrote {
+                    toc.push_str(&format!("DATA {} {dat_file}\n", qname));
+                }
             }
         }
     }
@@ -103,6 +221,46 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
     std::fs::write(&toc_path, &toc).context("failed to write toc.dat")?;
 
     Ok(())
+}
+
+/// Return all enum types in the database (schema, name, DDL).
+async fn get_enum_types(client: &Client) -> Result<Vec<(String, String, String)>> {
+    let rows = client
+        .query(
+            "SELECT n.nspname AS type_schema,
+                    t.typname AS type_name,
+                    array_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
+             FROM pg_catalog.pg_type t
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+             JOIN pg_catalog.pg_enum e ON e.enumtypid = t.oid
+             WHERE t.typtype = 'e'
+               AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+             GROUP BY n.nspname, t.typname
+             ORDER BY n.nspname, t.typname",
+            &[],
+        )
+        .await
+        .context("failed to query enum types")?;
+
+    let mut result = Vec::new();
+    for row in &rows {
+        let type_schema: &str = row.get("type_schema");
+        let type_name: &str = row.get("type_name");
+        let labels: Vec<String> = row.get("labels");
+        let label_list = labels
+            .iter()
+            .map(|l| format!("'{}'", l.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let qname = format!(
+            "{}.{}",
+            catalog::quote_ident(type_schema),
+            catalog::quote_ident(type_name)
+        );
+        let ddl = format!("CREATE TYPE {qname} AS ENUM ({label_list});\n");
+        result.push((type_schema.to_string(), type_name.to_string(), ddl));
+    }
+    Ok(result)
 }
 
 /// Return sequences that any column of this table depends on (via DEFAULT nextval).

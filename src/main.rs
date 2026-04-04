@@ -82,6 +82,10 @@ pub struct PgDumpArgs {
     #[arg(long = "no-privileges", alias = "no-acl")]
     no_privileges: bool,
 
+    /// Number of parallel jobs for directory format.
+    #[arg(short = 'j', long = "jobs")]
+    jobs: Option<usize>,
+
     /// Positional database name (alternative to -d).
     #[arg()]
     database: Option<String>,
@@ -114,6 +118,10 @@ pub struct PgRestoreArgs {
     /// Drop database objects before recreating them.
     #[arg(short = 'c', long = "clean")]
     clean: bool,
+
+    /// Number of parallel jobs.
+    #[arg(short = 'j', long = "jobs")]
+    jobs: Option<usize>,
 
     /// Input archive file (positional).
     filename: Option<String>,
@@ -148,6 +156,7 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
         exclude_tables: args.exclude_table,
         no_owner: args.no_owner,
         no_privileges: args.no_privileges,
+        jobs: args.jobs.unwrap_or(1).max(1),
     };
 
     match args.format {
@@ -194,6 +203,7 @@ async fn run_pg_restore(args: PgRestoreArgs) -> Result<()> {
     let opts = restore::RestoreOptions {
         dbname,
         clean: args.clean,
+        jobs: args.jobs.unwrap_or(1).max(1),
     };
 
     // If the path is a directory, use directory-format restore.
