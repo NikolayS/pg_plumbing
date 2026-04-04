@@ -1965,6 +1965,10 @@ fn create_table_am() {
         stdout.contains("regress_pg_dump_table_am"),
         "output should contain table regress_pg_dump_table_am:\n{stdout}"
     );
+    assert!(
+        stdout.contains("USING regress_test_table_am"),
+        "regress_pg_dump_table_am should include USING clause:\n{stdout}"
+    );
 }
 
 #[test]

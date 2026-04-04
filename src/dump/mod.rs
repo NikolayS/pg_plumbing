@@ -365,16 +365,6 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
             out.push('\n');
         }
 
-        // Emit procedural languages (before functions that use them).
-        for lang in &languages {
-            if opts.clean {
-                format::write_drop_language(&mut out, lang, opts.if_exists);
-            }
-            format::write_create_language(&mut out, lang);
-            format::write_alter_language_owner(&mut out, lang);
-            out.push('\n');
-        }
-
         // Emit functions and procedures.
         for func in &functions {
             if !dumped_schema_names.is_empty()
@@ -383,6 +373,16 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
                 continue;
             }
             format::write_create_function(&mut out, func);
+            out.push('\n');
+        }
+
+        // Emit procedural languages (after handler functions that they depend on).
+        for lang in &languages {
+            if opts.clean {
+                format::write_drop_language(&mut out, lang, opts.if_exists);
+            }
+            format::write_create_language(&mut out, lang);
+            format::write_alter_language_owner(&mut out, lang);
             out.push('\n');
         }
 
