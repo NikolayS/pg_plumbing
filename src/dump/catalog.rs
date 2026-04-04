@@ -711,8 +711,11 @@ async fn get_columns(client: &Client, table_oid: u32) -> Result<Vec<ColumnInfo>>
             None
         };
 
-        // For generated columns, clear default_expr so we don't also emit DEFAULT.
-        let default_expr: Option<String> = if attgenerated == "s" {
+        // For generated columns and identity columns, clear default_expr so we
+        // don't also emit DEFAULT.  Identity columns store a `nextval(...)` in
+        // pg_attrdef which must NOT appear in CREATE TABLE — only the
+        // `ALTER TABLE … ADD GENERATED … AS IDENTITY` statement that follows.
+        let default_expr: Option<String> = if attgenerated == "s" || !attidentity.is_empty() {
             None
         } else {
             row.get("default_expr")
@@ -2916,6 +2919,8 @@ pub struct IdentitySequenceInfo {
     pub cache_size: i64,
     /// Whether the sequence cycles.
     pub cycle: bool,
+    /// Sequence data type: 'b' = bigint, 'i' = int4, 's' = int2.
+    pub seqtype: char,
 }
 
 /// Query ENUM types from the catalog.
@@ -2988,11 +2993,15 @@ pub async fn get_range_types(client: &Client, opts: &DumpOptions) -> Result<Vec<
                     sn.nspname AS subtype_schema,
                     COALESCE(c.collname, '') AS collation_name,
                     COALESCE(cn.nspname, '') AS collation_schema,
-                    COALESCE((SELECT pf.proname || '(' || pg_catalog.format_type(pf.proargtypes[0], NULL) || ')' \
-                               FROM pg_catalog.pg_proc pf WHERE pf.oid = rg.rngcanonical), '') AS canonical_func,
-                    COALESCE((SELECT pf.proname || '(' || pg_catalog.format_type(pf.proargtypes[0], NULL) || ')' \
-                               FROM pg_catalog.pg_proc pf WHERE pf.oid = rg.rngsubdiff), '') AS subtype_diff_func,
-                    COALESCE(mn.nspname || '.' || mt.typname, '') AS multirange_name
+                    COALESCE((SELECT quote_ident(pn.nspname) || '.' || quote_ident(pf.proname) || '(' || pg_catalog.format_type(pf.proargtypes[0], NULL) || ')' \
+                               FROM pg_catalog.pg_proc pf \
+                               JOIN pg_catalog.pg_namespace pn ON pn.oid = pf.pronamespace \
+                               WHERE pf.oid = rg.rngcanonical), '') AS canonical_func,
+                    COALESCE((SELECT quote_ident(pn.nspname) || '.' || quote_ident(pf.proname) || '(' || pg_catalog.format_type(pf.proargtypes[0], NULL) || ')' \
+                               FROM pg_catalog.pg_proc pf \
+                               JOIN pg_catalog.pg_namespace pn ON pn.oid = pf.pronamespace \
+                               WHERE pf.oid = rg.rngsubdiff), '') AS subtype_diff_func,
+                    COALESCE(quote_ident(mn.nspname) || '.' || quote_ident(mt.typname), '') AS multirange_name
              FROM pg_catalog.pg_type t
              JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
              JOIN pg_catalog.pg_roles r ON r.oid = t.typowner
@@ -3329,13 +3338,14 @@ pub async fn get_identity_sequences(
                     tc.relname AS table_name,
                     a.attname AS column_name,
                     a.attidentity::text AS identity,
-                    sn.nspname || '.' || s.relname AS seq_name,
+                    quote_ident(sn.nspname) || '.' || quote_ident(s.relname) AS seq_name,
                     seq.seqstart AS start_value,
                     seq.seqincrement AS increment_by,
                     seq.seqmin AS min_value,
                     seq.seqmax AS max_value,
                     seq.seqcache AS cache_size,
-                    seq.seqcycle AS cycle
+                    seq.seqcycle AS cycle,
+                    seq.seqtypid::regtype::text AS seqtype
              FROM pg_catalog.pg_attribute a
              JOIN pg_catalog.pg_class tc ON tc.oid = a.attrelid
              JOIN pg_catalog.pg_namespace tn ON tn.oid = tc.relnamespace
@@ -3368,6 +3378,13 @@ pub async fn get_identity_sequences(
         let identity = identity_str.chars().next().unwrap_or('a');
         let min_value: i64 = row.get("min_value");
         let max_value: i64 = row.get("max_value");
+        // Map pg type name → char: 'b'=bigint, 'i'=integer, 's'=smallint.
+        let seqtype_str: &str = row.get("seqtype");
+        let seqtype = match seqtype_str {
+            "smallint" => 's',
+            "integer" => 'i',
+            _ => 'b', // bigint or anything else
+        };
         iseqs.push(IdentitySequenceInfo {
             table_schema: schema.to_string(),
             table_name: row.get::<_, &str>("table_name").to_string(),
@@ -3376,11 +3393,11 @@ pub async fn get_identity_sequences(
             seq_name: row.get::<_, &str>("seq_name").to_string(),
             start_value: row.get("start_value"),
             increment_by: row.get("increment_by"),
-            // Treat 1 as NO MINVALUE and i64::MAX (or type max) as NO MAXVALUE.
             min_value: Some(min_value),
             max_value: Some(max_value),
             cache_size: row.get("cache_size"),
             cycle: row.get("cycle"),
+            seqtype,
         });
     }
     Ok(iseqs)
