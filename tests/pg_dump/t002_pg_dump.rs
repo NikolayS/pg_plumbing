@@ -1091,8 +1091,7 @@ fn create_view() {
 fn drop_schemas() {
     crate::common::setup_dump_test_schema();
     crate::common::setup_dump_test_second_schema();
-    let (stdout, _stderr, code) =
-        crate::common::run_pg_dump(&["-d", "postgres", "--clean"]);
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres", "--clean"]);
     assert_eq!(code, 0, "pg_dump --clean should succeed");
     assert!(
         stdout.contains("DROP SCHEMA dump_test"),

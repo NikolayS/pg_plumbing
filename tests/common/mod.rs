@@ -324,7 +324,9 @@ pub fn setup_dump_test_second_schema() {
         if !password.is_empty() {
             cmd.env("PGPASSWORD", &password);
         }
-        let output = cmd.output().expect("psql setup_dump_test_second_schema failed");
+        let output = cmd
+            .output()
+            .expect("psql setup_dump_test_second_schema failed");
         assert!(
             output.status.success(),
             "setup_dump_test_second_schema failed: {}",
