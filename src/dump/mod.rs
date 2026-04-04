@@ -51,6 +51,12 @@ pub struct DumpOptions {
     pub if_exists: bool,
     /// Include CREATE DATABASE + \connect at the start.
     pub create_db: bool,
+    /// Do not dump large objects.
+    pub no_large_objects: bool,
+    /// Include large objects even when a schema filter (--schema=X) is active.
+    pub large_objects: bool,
+    /// Do not dump row-level security policies.
+    pub no_policies: bool,
 }
 
 /// Dump a database in plain SQL format.
@@ -244,6 +250,30 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
             }
             format::write_create_table(&mut out, table);
             format::write_alter_table_owner(&mut out, table);
+
+            // Emit column-level storage, statistics, and n_distinct overrides.
+            for col in &table.columns {
+                if col.storage_override.is_some() {
+                    format::write_alter_column_storage(&mut out, table, col);
+                }
+                if col.statistics.is_some() {
+                    format::write_alter_column_statistics(&mut out, table, col);
+                }
+                if col.n_distinct.is_some() {
+                    format::write_alter_column_n_distinct(&mut out, table, col);
+                }
+            }
+
+            // Emit CLUSTER ON if a cluster index is marked.
+            if let Some(ref idx) = table.cluster_index {
+                format::write_alter_table_cluster(&mut out, table, idx);
+            }
+
+            // Emit ENABLE ROW LEVEL SECURITY.
+            if table.rls_enabled {
+                format::write_alter_table_enable_rls(&mut out, table);
+            }
+
             out.push('\n');
         }
 
@@ -396,6 +426,57 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
                 format::write_privileges(&mut out, &privileges);
                 out.push('\n');
             }
+        }
+    }
+
+    // Emit large objects.
+    // Included when: no --no-large-objects AND (no schema filter OR --large-objects).
+    if !opts.data_only && !opts.no_large_objects && (opts.schemas.is_empty() || opts.large_objects)
+    {
+        let large_objects = catalog::get_large_objects(&client)
+            .await
+            .context("failed to query large objects")?;
+        if !large_objects.is_empty() {
+            let include_data = !opts.schema_only;
+            for lo in &large_objects {
+                format::write_create_large_object(&mut out, lo, include_data);
+                format::write_alter_large_object_owner(&mut out, lo);
+            }
+            if !opts.no_privileges {
+                for lo in &large_objects {
+                    format::write_grant_large_object(&mut out, lo);
+                }
+            }
+            for lo in &large_objects {
+                format::write_comment_on_large_object(&mut out, lo);
+            }
+            out.push('\n');
+        }
+    }
+
+    // Emit row-level security policies.
+    if !opts.data_only && !table_filter_active && !opts.no_policies {
+        let policies = catalog::get_policies(&client, opts)
+            .await
+            .context("failed to query policies")?;
+        if !policies.is_empty() {
+            for policy in &policies {
+                format::write_create_policy(&mut out, policy);
+            }
+            // Emit COMMENT ON POLICY.
+            for policy in &policies {
+                if let Some(ref comment) = policy.comment {
+                    let escaped = comment.replace('\'', "''");
+                    out.push_str(&format!(
+                        "COMMENT ON POLICY {} ON {}.{} IS '{}';\n",
+                        catalog::quote_ident(&policy.name),
+                        catalog::quote_ident(&policy.table_schema),
+                        catalog::quote_ident(&policy.table_name),
+                        escaped
+                    ));
+                }
+            }
+            out.push('\n');
         }
     }
 

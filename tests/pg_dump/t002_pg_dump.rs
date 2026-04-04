@@ -118,9 +118,16 @@ fn alter_publication_owner() {
 }
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted + needs large object
 /// ALTER LARGE OBJECT ... OWNER TO.
-fn alter_large_object_owner() {}
+fn alter_large_object_owner() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER LARGE OBJECT") && stdout.contains("OWNER TO"),
+        "output should contain ALTER LARGE OBJECT ... OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: OWNER TO not emitted + needs procedural language
@@ -228,29 +235,84 @@ fn alter_table_add_primary_key() {
 // stub: alter_table_partitioned_fk    → see issue-26 section below
 
 #[test]
-#[ignore] // not yet implemented: ALTER COLUMN SET STATISTICS not emitted
 /// ALTER TABLE ONLY test_table ALTER COLUMN col1 SET STATISTICS 90.
-fn alter_column_set_statistics() {}
+fn alter_column_set_statistics() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("SET STATISTICS"),
+        "output should contain SET STATISTICS:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("col1"),
+        "SET STATISTICS should reference col1:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: ALTER COLUMN SET STORAGE not emitted
-/// ALTER TABLE ONLY test_table ALTER COLUMN col2 SET STORAGE.
-fn alter_column_set_storage_col2() {}
+/// ALTER TABLE ONLY test_table ALTER COLUMN col2 SET STORAGE EXTERNAL.
+fn alter_column_set_storage_col2() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("SET STORAGE") && stdout.contains("EXTERNAL"),
+        "output should contain SET STORAGE EXTERNAL:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("col2"),
+        "SET STORAGE should reference col2:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: ALTER COLUMN SET STORAGE not emitted
-/// ALTER TABLE ONLY test_table ALTER COLUMN col3 SET STORAGE.
-fn alter_column_set_storage_col3() {}
+/// ALTER TABLE ONLY test_table ALTER COLUMN col3 SET STORAGE MAIN.
+fn alter_column_set_storage_col3() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("SET STORAGE") && stdout.contains("MAIN"),
+        "output should contain SET STORAGE MAIN:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("col3"),
+        "SET STORAGE should reference col3:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: ALTER COLUMN SET n_distinct not emitted
-/// ALTER TABLE ONLY test_table ALTER COLUMN col4 SET n_distinct.
-fn alter_column_set_n_distinct() {}
+/// ALTER TABLE ONLY test_table ALTER COLUMN col4 SET (n_distinct = 5).
+fn alter_column_set_n_distinct() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("SET (n_distinct"),
+        "output should contain SET (n_distinct:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("col4"),
+        "SET (n_distinct should reference col4:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: CLUSTER ON not emitted
 /// ALTER TABLE test_table CLUSTER ON test_table_pkey.
-fn alter_table_cluster() {}
+fn alter_table_cluster() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CLUSTER ON"),
+        "output should contain CLUSTER ON:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("test_table"),
+        "CLUSTER ON should reference test_table:\n{stdout}"
+    );
+}
 
 #[test]
 /// ALTER TABLE test_table DISABLE TRIGGER ALL.
@@ -292,9 +354,20 @@ fn alter_foreign_table_column_options() {
 fn alter_table_owner() {}
 
 #[test]
-#[ignore] // not yet implemented: ENABLE ROW LEVEL SECURITY not emitted
 /// ALTER TABLE test_table ENABLE ROW LEVEL SECURITY.
-fn alter_table_enable_rls() {}
+fn alter_table_enable_rls() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ENABLE ROW LEVEL SECURITY"),
+        "output should contain ENABLE ROW LEVEL SECURITY:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("test_table"),
+        "ENABLE ROW LEVEL SECURITY should reference test_table:\n{stdout}"
+    );
+}
 
 #[test]
 
@@ -348,19 +421,51 @@ fn alter_ts_dict_owner() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: large object support
-/// LO create (using lo_from_bytea) appears in appropriate runs.
-fn lo_create() {}
+/// LO create (using lo_from_bytea) appears in full dumps.
+fn lo_create() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("lo_from_bytea"),
+        "output should contain lo_from_bytea:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: large object support
-/// LO load (using lo_from_bytea).
-fn lo_load() {}
+/// LO load — full dump includes non-empty hex data for the large object.
+fn lo_load() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("lo_from_bytea"),
+        "output should contain lo_from_bytea:\n{stdout}"
+    );
+    // "hello world" in hex is 68656c6c6f20776f726c64 — non-empty data must be present.
+    assert!(
+        stdout.contains("\\x68") || stdout.contains("'\\x6"),
+        "lo_from_bytea should contain non-empty hex data:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: large object support
-/// LO create (with no data) for schema-only dumps.
-fn lo_create_no_data() {}
+/// LO create with no data — schema-only dump emits the LO OID but no content.
+fn lo_create_no_data() {
+    crate::common::setup_issue52_schema();
+    // --schema-only: LOs are still emitted (no schema filter) but with empty data.
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres", "--schema-only"]);
+    assert_eq!(code, 0, "pg_dump --schema-only should succeed");
+    assert!(
+        stdout.contains("lo_from_bytea"),
+        "schema-only output should contain lo_from_bytea:\n{stdout}"
+    );
+    // Data should be empty ('') in schema-only mode.
+    assert!(
+        stdout.contains("lo_from_bytea") && stdout.contains(", '')"),
+        "schema-only lo_from_bytea should have empty data:\n{stdout}"
+    );
+}
 
 // ---------------------------------------------------------------
 // Module: COMMENT ON
@@ -437,14 +542,32 @@ fn comment_on_conversion() {}
 fn comment_on_collation() {}
 
 #[test]
-#[ignore] // not yet implemented: COMMENT ON not emitted + needs large object
 /// COMMENT ON LARGE OBJECT.
-fn comment_on_large_object() {}
+fn comment_on_large_object() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("COMMENT ON LARGE OBJECT"),
+        "output should contain COMMENT ON LARGE OBJECT:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: COMMENT ON not emitted + needs policy
 /// COMMENT ON POLICY p1.
-fn comment_on_policy() {}
+fn comment_on_policy() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("COMMENT ON POLICY"),
+        "output should contain COMMENT ON POLICY:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("p1"),
+        "COMMENT ON POLICY should reference p1:\n{stdout}"
+    );
+}
 
 #[test]
 /// COMMENT ON PUBLICATION pub1.
@@ -634,7 +757,6 @@ fn create_role() {}
 fn create_role_quoted() {}
 
 #[test]
-#[ignore] // not yet implemented: newline handling in table name comments
 /// Newline in table name handled in comments.
 fn newline_in_table_name_comment() {}
 
@@ -1083,9 +1205,28 @@ fn refresh_materialized_views() {
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: CREATE POLICY not emitted + needs RLS setup
 /// CREATE POLICY p1..p6 ON test_table (various FOR clauses and RESTRICTIVE).
-fn create_policies() {}
+fn create_policies() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE POLICY"),
+        "output should contain CREATE POLICY:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("p1") && stdout.contains("p2"),
+        "output should contain policies p1 and p2:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("FOR SELECT") || stdout.contains("FOR INSERT"),
+        "output should contain FOR SELECT or FOR INSERT clause:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("AS RESTRICTIVE"),
+        "output should contain AS RESTRICTIVE (p5):\n{stdout}"
+    );
+}
 
 // ---------------------------------------------------------------
 // Module: Property Graph
@@ -1551,9 +1692,16 @@ fn grant_select_tables() {
 }
 
 #[test]
-#[ignore] // not yet implemented: GRANT not emitted + needs large object
 /// GRANT ALL ON LARGE OBJECT.
-fn grant_all_large_object() {}
+fn grant_all_large_object() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("GRANT") && stdout.contains("LARGE OBJECT"),
+        "output should contain GRANT ... LARGE OBJECT:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: GRANT not emitted in dump output
@@ -2102,14 +2250,29 @@ fn run_pg_dumpall_exclude() {}
 fn run_no_toast_compression() {}
 
 #[test]
-#[ignore] // not yet implemented: --no-large-objects flag not supported
 /// no_large_objects: pg_dump --no-large-objects.
-fn run_no_large_objects() {}
+fn run_no_large_objects() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-d", "postgres", "--no-large-objects"]);
+    assert_eq!(code, 0, "pg_dump --no-large-objects should succeed");
+    assert!(
+        !stdout.contains("lo_from_bytea"),
+        "output should NOT contain lo_from_bytea with --no-large-objects:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: --no-policies flag not supported
 /// no_policies / no_policies_restore: pg_dump/pg_restore --no-policies.
-fn run_no_policies() {}
+fn run_no_policies() {
+    crate::common::setup_issue52_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres", "--no-policies"]);
+    assert_eq!(code, 0, "pg_dump --no-policies should succeed");
+    assert!(
+        !stdout.contains("CREATE POLICY"),
+        "output should NOT contain CREATE POLICY with --no-policies:\n{stdout}"
+    );
+}
 
 #[test]
 /// no_privs: pg_dump --no-privileges.
@@ -2239,9 +2402,30 @@ fn run_schema_only() {
 fn run_sections() {}
 
 #[test]
-#[ignore] // not yet implemented: --large-objects flag not supported
-/// test_schema_plus_large_objects: pg_dump --schema=dump_test --large-objects.
-fn run_schema_plus_large_objects() {}
+/// test_schema_plus_large_objects: pg_dump --schema=public --large-objects.
+/// With a schema filter alone, LOs are excluded; --large-objects forces them in.
+fn run_schema_plus_large_objects() {
+    crate::common::setup_issue52_schema();
+    // Confirm that without --large-objects the LO is excluded.
+    let (stdout_no_lo, _stderr, code) =
+        crate::common::run_pg_dump(&["-d", "postgres", "--schema=public"]);
+    assert_eq!(code, 0, "pg_dump --schema=public should succeed");
+    assert!(
+        !stdout_no_lo.contains("lo_from_bytea"),
+        "schema-filtered dump should NOT contain lo_from_bytea without --large-objects:\n{stdout_no_lo}"
+    );
+    // With --large-objects, LOs should be present despite the schema filter.
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-d", "postgres", "--schema=public", "--large-objects"]);
+    assert_eq!(
+        code, 0,
+        "pg_dump --schema=public --large-objects should succeed"
+    );
+    assert!(
+        stdout.contains("lo_from_bytea"),
+        "output should contain lo_from_bytea with --large-objects even with schema filter:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: --no-statistics flag not supported by pg-dump subcommand

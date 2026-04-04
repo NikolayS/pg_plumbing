@@ -486,6 +486,88 @@ pub fn setup_issue50_schema() {
     });
 }
 
+/// Set up the issue-52 test schema: large objects, RLS policies, and
+/// column-level storage/statistics/n_distinct/cluster overrides.
+/// Uses OnceLock to avoid poisoning.
+pub fn setup_issue52_schema() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        // We need test_table from issue-50 (col1 int PK, col2 text).
+        setup_issue50_schema();
+
+        let conninfo = test_conninfo("postgres");
+        let password = std::env::var("PGPASSWORD").unwrap_or_default();
+
+        // Step 1: Add columns and set statistics/storage/n_distinct/cluster.
+        let sql1 = "
+ALTER TABLE test_table ADD COLUMN IF NOT EXISTS col3 text;
+ALTER TABLE test_table ADD COLUMN IF NOT EXISTS col4 real;
+ALTER TABLE ONLY test_table ALTER COLUMN col1 SET STATISTICS 90;
+ALTER TABLE ONLY test_table ALTER COLUMN col2 SET STORAGE EXTERNAL;
+ALTER TABLE ONLY test_table ALTER COLUMN col3 SET STORAGE MAIN;
+ALTER TABLE ONLY test_table ALTER COLUMN col4 SET (n_distinct = 5);
+ALTER TABLE test_table CLUSTER ON test_table_pkey;
+        ";
+
+        // Step 2: Create RLS policies and enable RLS.
+        // Drop any existing policies first to make the setup idempotent.
+        let sql2 = "
+DROP POLICY IF EXISTS p1 ON test_table;
+DROP POLICY IF EXISTS p2 ON test_table;
+DROP POLICY IF EXISTS p3 ON test_table;
+DROP POLICY IF EXISTS p4 ON test_table;
+DROP POLICY IF EXISTS p5 ON test_table;
+DROP POLICY IF EXISTS p6 ON test_table;
+CREATE POLICY p1 ON test_table FOR SELECT USING (true);
+CREATE POLICY p2 ON test_table FOR INSERT WITH CHECK (true);
+CREATE POLICY p3 ON test_table FOR UPDATE USING (true) WITH CHECK (false);
+CREATE POLICY p4 ON test_table FOR DELETE USING (true);
+CREATE POLICY p5 ON test_table AS RESTRICTIVE USING (false);
+CREATE POLICY p6 ON test_table;
+ALTER TABLE test_table ENABLE ROW LEVEL SECURITY;
+COMMENT ON POLICY p1 ON test_table IS 'test policy comment';
+        ";
+
+        // Step 3: Create a large object with data, then set owner, grant, comment.
+        // We use a DO block to capture the OID and apply the subsequent statements.
+        let sql3 = "
+DO $$
+DECLARE
+  v_oid oid;
+BEGIN
+  FOR v_oid IN
+    SELECT oid FROM pg_catalog.pg_largeobject_metadata
+    WHERE lomowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)
+  LOOP
+    PERFORM lo_unlink(v_oid);
+  END LOOP;
+  v_oid := lo_from_bytea(0, 'hello world'::bytea);
+  EXECUTE format(
+    'COMMENT ON LARGE OBJECT %s IS ''test large object comment''',
+    v_oid
+  );
+  EXECUTE format('GRANT ALL ON LARGE OBJECT %s TO PUBLIC', v_oid);
+END $$;
+        ";
+
+        for (step, sql) in [sql1, sql2, sql3].iter().enumerate() {
+            let mut cmd = Command::new("psql");
+            cmd.arg(&conninfo).arg("-c").arg(sql);
+            if !password.is_empty() {
+                cmd.env("PGPASSWORD", &password);
+            }
+            let output = cmd.output().expect("psql setup_issue52 failed");
+            assert!(
+                output.status.success(),
+                "setup_issue52_schema step {} failed: {}",
+                step + 1,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    });
+}
+
 /// Set up the issue-51 test schema: FDW, foreign server, foreign table,
 /// user mapping, publications, and publication comments.
 /// Uses OnceLock to avoid poisoning.

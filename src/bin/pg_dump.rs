@@ -128,6 +128,18 @@ struct Cli {
     #[arg(short = 'x', long = "no-acl", alias = "no-privileges")]
     no_acl: bool,
 
+    /// Do not dump large objects
+    #[arg(long = "no-large-objects")]
+    no_large_objects: bool,
+
+    /// Dump large objects even when a schema filter is active
+    #[arg(short = 'b', long = "large-objects")]
+    large_objects: bool,
+
+    /// Do not dump row-level security policies
+    #[arg(long = "no-policies")]
+    no_policies: bool,
+
     // ---- Connection options ----
     /// Database server host or socket directory (overrides PGHOST)
     #[arg(short = 'h', long = "host")]
@@ -340,6 +352,9 @@ fn main() {
         clean: cli.clean,
         if_exists: cli.if_exists,
         create_db: cli.create,
+        no_large_objects: cli.no_large_objects,
+        large_objects: cli.large_objects,
+        no_policies: cli.no_policies,
     };
 
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");

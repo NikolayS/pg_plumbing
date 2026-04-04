@@ -7,10 +7,10 @@ use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
 use super::catalog::{
-    format_fdw_options, quote_ident, ConstraintInfo, EventTriggerInfo, ExtendedStatInfo, FdwInfo,
-    ForeignServerInfo, ForeignTableInfo, FunctionInfo, MatviewInfo, PrivilegeInfo, PublicationInfo,
-    SchemaInfo, SequenceInfo, TableInfo, TransformInfo, TriggerInfo, TypeCommentInfo,
-    UserMappingInfo, ViewInfo,
+    format_fdw_options, parse_acl_entry, quote_ident, ColumnInfo, ConstraintInfo, EventTriggerInfo,
+    ExtendedStatInfo, FdwInfo, ForeignServerInfo, ForeignTableInfo, FunctionInfo, LargeObjectInfo,
+    MatviewInfo, PolicyInfo, PrivilegeInfo, PublicationInfo, SchemaInfo, SequenceInfo, TableInfo,
+    TransformInfo, TriggerInfo, TypeCommentInfo, UserMappingInfo, ViewInfo,
 };
 use super::DumpOptions;
 
@@ -863,6 +863,179 @@ pub fn write_alter_publication_tables(out: &mut String, pub_info: &PublicationIn
             quote_ident(schema)
         ));
     }
+}
+
+/// Write a large object creation statement.
+///
+/// Uses `pg_catalog.lo_from_bytea(oid, data)`.  When `include_data` is false
+/// (schema-only mode) the data argument is an empty string so only the OID
+/// (object metadata) is restored.
+pub fn write_create_large_object(out: &mut String, lo: &LargeObjectInfo, include_data: bool) {
+    out.push_str(&format!("--\n-- LARGE OBJECT {}\n--\n\n", lo.oid));
+    if include_data && !lo.hex_data.is_empty() {
+        out.push_str(&format!(
+            "SELECT pg_catalog.lo_from_bytea({}, '\\x{}');\n",
+            lo.oid, lo.hex_data
+        ));
+    } else {
+        out.push_str(&format!(
+            "SELECT pg_catalog.lo_from_bytea({}, '');\n",
+            lo.oid
+        ));
+    }
+}
+
+/// Write `ALTER LARGE OBJECT … OWNER TO …;` statement.
+pub fn write_alter_large_object_owner(out: &mut String, lo: &LargeObjectInfo) {
+    out.push_str(&format!(
+        "ALTER LARGE OBJECT {} OWNER TO {};\n",
+        lo.oid,
+        quote_ident(&lo.owner)
+    ));
+}
+
+/// Write `COMMENT ON LARGE OBJECT … IS '…';` if a comment is set.
+pub fn write_comment_on_large_object(out: &mut String, lo: &LargeObjectInfo) {
+    if let Some(ref comment) = lo.comment {
+        let escaped = comment.replace('\'', "''");
+        out.push_str(&format!(
+            "COMMENT ON LARGE OBJECT {} IS '{}';\n",
+            lo.oid, escaped
+        ));
+    }
+}
+
+/// Write `GRANT … ON LARGE OBJECT …` privilege statements.
+pub fn write_grant_large_object(out: &mut String, lo: &LargeObjectInfo) {
+    if lo.acl.is_empty() {
+        return;
+    }
+    for entry in lo.acl.split(',') {
+        if entry.is_empty() {
+            continue;
+        }
+        if let Some((grantee, privileges)) = parse_acl_entry(entry) {
+            // Large objects only have SELECT (r) and UPDATE (w).
+            // When both are granted, emit ALL for brevity.
+            let has_select = privileges.iter().any(|p| p == "SELECT");
+            let has_update = privileges.iter().any(|p| p == "UPDATE");
+            let priv_str = if has_select && has_update {
+                "ALL".to_string()
+            } else {
+                privileges.join(", ")
+            };
+            out.push_str(&format!(
+                "GRANT {} ON LARGE OBJECT {} TO {};\n",
+                priv_str, lo.oid, grantee
+            ));
+        }
+    }
+}
+
+/// Write a `CREATE POLICY` statement.
+pub fn write_create_policy(out: &mut String, policy: &PolicyInfo) {
+    let qname = format!(
+        "{}.{}",
+        quote_ident(&policy.table_schema),
+        quote_ident(&policy.table_name)
+    );
+
+    let mut stmt = format!("CREATE POLICY {} ON {}", quote_ident(&policy.name), qname);
+
+    if !policy.permissive {
+        stmt.push_str(" AS RESTRICTIVE");
+    }
+
+    if policy.command != "ALL" {
+        stmt.push_str(&format!(" FOR {}", policy.command));
+    }
+
+    if !policy.roles.is_empty() {
+        let role_list: Vec<String> = policy.roles.iter().map(|r| quote_ident(r)).collect();
+        stmt.push_str(&format!(" TO {}", role_list.join(", ")));
+    }
+
+    if let Some(ref using) = policy.using_expr {
+        stmt.push_str(&format!(" USING ({})", using));
+    }
+
+    if let Some(ref check) = policy.check_expr {
+        stmt.push_str(&format!(" WITH CHECK ({})", check));
+    }
+
+    stmt.push_str(";\n");
+    out.push_str(&stmt);
+}
+
+/// Write `ALTER TABLE … ENABLE ROW LEVEL SECURITY;` for RLS-enabled tables.
+pub fn write_alter_table_enable_rls(out: &mut String, table: &TableInfo) {
+    let qname = table.qualified_name();
+    out.push_str(&format!(
+        "ALTER TABLE {} ENABLE ROW LEVEL SECURITY;\n",
+        qname
+    ));
+}
+
+/// Write `ALTER TABLE ONLY … ALTER COLUMN … SET STATISTICS N;`
+pub fn write_alter_column_statistics(out: &mut String, table: &TableInfo, col: &ColumnInfo) {
+    if let Some(stats) = col.statistics {
+        let qname = table.qualified_name();
+        out.push_str(&format!(
+            "ALTER TABLE ONLY {} ALTER COLUMN {} SET STATISTICS {};\n",
+            qname,
+            quote_ident(&col.name),
+            stats
+        ));
+    }
+}
+
+/// Write `ALTER TABLE ONLY … ALTER COLUMN … SET STORAGE X;`
+pub fn write_alter_column_storage(out: &mut String, table: &TableInfo, col: &ColumnInfo) {
+    if let Some(storage_char) = col.storage_override {
+        let storage_name = match storage_char {
+            'p' => "PLAIN",
+            'e' => "EXTERNAL",
+            'x' => "EXTENDED",
+            'm' => "MAIN",
+            _ => return,
+        };
+        let qname = table.qualified_name();
+        out.push_str(&format!(
+            "ALTER TABLE ONLY {} ALTER COLUMN {} SET STORAGE {};\n",
+            qname,
+            quote_ident(&col.name),
+            storage_name
+        ));
+    }
+}
+
+/// Write `ALTER TABLE ONLY … ALTER COLUMN … SET (n_distinct = V);`
+pub fn write_alter_column_n_distinct(out: &mut String, table: &TableInfo, col: &ColumnInfo) {
+    if let Some(nd) = col.n_distinct {
+        let qname = table.qualified_name();
+        // Format as integer when there's no fractional part.
+        let nd_str = if nd.fract() == 0.0 {
+            format!("{}", nd as i64)
+        } else {
+            format!("{}", nd)
+        };
+        out.push_str(&format!(
+            "ALTER TABLE ONLY {} ALTER COLUMN {} SET (n_distinct = {});\n",
+            qname,
+            quote_ident(&col.name),
+            nd_str
+        ));
+    }
+}
+
+/// Write `ALTER TABLE … CLUSTER ON index_name;`
+pub fn write_alter_table_cluster(out: &mut String, table: &TableInfo, index_name: &str) {
+    let qname = table.qualified_name();
+    out.push_str(&format!(
+        "ALTER TABLE {} CLUSTER ON {};\n",
+        qname,
+        quote_ident(index_name)
+    ));
 }
 
 #[cfg(test)]
