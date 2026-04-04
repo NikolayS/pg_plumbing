@@ -366,7 +366,7 @@ pub async fn restore_plain(sql: &str, opts: &RestoreOptions) -> Result<()> {
             if let Err(e) = client.batch_execute(stmt).await {
                 let msg = e.to_string();
                 if !msg.contains("does not exist") {
-                    return Err(anyhow::anyhow!("failed to execute DROP: {e}").into());
+                    return Err(anyhow::anyhow!("failed to execute DROP: {e}"));
                 }
                 // "does not exist" errors are expected and silently ignored,
                 // just like real pg_restore --clean.
