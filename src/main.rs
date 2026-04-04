@@ -18,7 +18,7 @@ struct Cli {
 #[derive(clap::Subcommand, Debug)]
 enum Command {
     /// Dump a PostgreSQL database into a script file or archive.
-    PgDump(PgDumpArgs),
+    PgDump(Box<PgDumpArgs>),
     /// Restore a PostgreSQL database from an archive created by pg_dump.
     PgRestore(PgRestoreArgs),
 }
@@ -114,6 +114,34 @@ pub struct PgDumpArgs {
     #[arg(long = "no-policies")]
     no_policies: bool,
 
+    /// Do not dump subscriptions.
+    #[arg(long = "no-subscriptions")]
+    no_subscriptions: bool,
+
+    /// Do not include commands to set table access method (USING clause).
+    #[arg(long = "no-table-access-method")]
+    no_table_access_method: bool,
+
+    /// Do not include TOAST compression settings.
+    #[arg(long = "no-toast-compression")]
+    no_toast_compression: bool,
+
+    /// Do not dump statistics (column targets, extended stats).
+    #[arg(long = "no-statistics")]
+    no_statistics: bool,
+
+    /// Dump only statistics (no schema or data).
+    #[arg(long = "statistics-only")]
+    statistics_only: bool,
+
+    /// Dump only this section (pre-data, data, or post-data).
+    #[arg(long = "section")]
+    section: Option<String>,
+
+    /// Set role name to SET ROLE before dumping.
+    #[arg(long = "role")]
+    role: Option<String>,
+
     /// Positional database name (alternative to -d).
     #[arg()]
     database: Option<String>,
@@ -163,7 +191,7 @@ pub struct PgRestoreArgs {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::PgDump(args) => run_pg_dump(args).await,
+        Command::PgDump(args) => run_pg_dump(*args).await,
         Command::PgRestore(args) => run_pg_restore(args).await,
     }
 }
@@ -172,6 +200,13 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
     // --if-exists requires --clean
     if args.if_exists && !args.clean {
         bail!("pg_dump: error: option --if-exists requires option -c/--clean");
+    }
+
+    // --section must be pre-data, data, or post-data
+    if let Some(ref sec) = args.section {
+        if !matches!(sec.as_str(), "pre-data" | "data" | "post-data") {
+            bail!("pg_dump: error: unrecognized section name: \"{sec}\"");
+        }
     }
 
     let dbname = args
@@ -203,6 +238,13 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
         no_large_objects: args.no_large_objects,
         large_objects: args.large_objects,
         no_policies: args.no_policies,
+        no_subscriptions: args.no_subscriptions,
+        no_table_access_method: args.no_table_access_method,
+        no_toast_compression: args.no_toast_compression,
+        no_statistics: args.no_statistics,
+        statistics_only: args.statistics_only,
+        section: args.section.clone(),
+        role: args.role.clone(),
     };
 
     match args.format {

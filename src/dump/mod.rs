@@ -57,6 +57,21 @@ pub struct DumpOptions {
     pub large_objects: bool,
     /// Do not dump row-level security policies.
     pub no_policies: bool,
+    /// Do not dump subscriptions.
+    pub no_subscriptions: bool,
+    /// Do not dump table access method (USING clause).
+    pub no_table_access_method: bool,
+    /// Do not dump TOAST compression settings.
+    pub no_toast_compression: bool,
+    /// Do not dump statistics (column targets, extended stats).
+    pub no_statistics: bool,
+    /// Dump only statistics (no schema or data).
+    pub statistics_only: bool,
+    /// Dump only this section: "pre-data", "data", or "post-data".
+    /// None means dump everything.
+    pub section: Option<String>,
+    /// Role name to SET ROLE to before dumping.
+    pub role: Option<String>,
 }
 
 /// Dump a database in plain SQL format.
@@ -70,6 +85,40 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
             eprintln!("connection error: {e}");
         }
     });
+
+    // Apply --role: SET ROLE before running any queries.
+    if let Some(ref role) = opts.role {
+        let set_role_sql = format!("SET ROLE {}", catalog::quote_ident(role));
+        client
+            .execute(set_role_sql.as_str(), &[])
+            .await
+            .with_context(|| format!("failed to SET ROLE {role}"))?;
+    }
+
+    // Compute section flags from --section / --schema-only / --data-only /
+    // --statistics-only.
+    //
+    // pre-data  → schema DDL only (CREATE TABLE, sequences, etc.), no data
+    // data      → COPY/INSERT data only, no schema DDL
+    // post-data → post-data DDL only (indexes, triggers, constraints added
+    //             after data load), currently no-op since we embed these in
+    //             pre-data for simplicity
+    //
+    // --statistics-only means: emit nothing (no schema, no data, no post-data)
+    // because statistics emission is not yet implemented.
+    let (emit_schema, emit_data) = if opts.statistics_only {
+        (false, false)
+    } else {
+        match opts.section.as_deref() {
+            Some("pre-data") => (true, false),
+            Some("data") => (false, true),
+            Some("post-data") => (false, false),
+            _ => {
+                // No --section: honour --schema-only / --data-only as before.
+                (!opts.data_only, !opts.schema_only)
+            }
+        }
+    };
 
     let tables = catalog::get_tables(&client, opts)
         .await
@@ -234,7 +283,7 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     let dumped_schema_names: std::collections::HashSet<&str> =
         tables.iter().map(|t| t.schema.as_str()).collect();
 
-    if !opts.data_only {
+    if emit_schema {
         // Emit CREATE SCHEMA (and DROP SCHEMA for --clean) for full-DB or
         // schema-filtered dumps.  Table-specific dumps (-t) skip schema DDL
         // because the schema may not exist in the restore target.
@@ -381,7 +430,7 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     }
 
     for table in &tables {
-        if !opts.data_only {
+        if emit_schema {
             // --clean: emit DROP statement before each CREATE TABLE
             if opts.clean {
                 let qname = table.qualified_name();
@@ -391,7 +440,7 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
                     out.push_str(&format!("DROP TABLE {qname} CASCADE;\n"));
                 }
             }
-            format::write_create_table(&mut out, table);
+            format::write_create_table(&mut out, table, opts);
 
             // Emit identity column definitions immediately after CREATE TABLE,
             // so the table exists before ALTER TABLE ... ADD GENERATED is run.
@@ -411,7 +460,7 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
                 if col.storage_override.is_some() {
                     format::write_alter_column_storage(&mut out, table, col);
                 }
-                if col.statistics.is_some() {
+                if col.statistics.is_some() && !opts.no_statistics {
                     format::write_alter_column_statistics(&mut out, table, col);
                 }
                 if col.n_distinct.is_some() {
@@ -432,7 +481,7 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
             out.push('\n');
         }
 
-        if !opts.schema_only {
+        if emit_data {
             // Skip data for tables matching --exclude-table-data patterns.
             let skip_data =
                 filter::matches_any(&opts.exclude_table_data, &table.schema, &table.name);
@@ -444,7 +493,7 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     }
 
     // Emit foreign tables (schema only, no data).
-    if !opts.data_only && !table_filter_active {
+    if emit_schema && !table_filter_active {
         for ft in &foreign_tables {
             if !dumped_schema_names.is_empty() && !dumped_schema_names.contains(ft.schema.as_str())
             {
@@ -457,7 +506,7 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
         }
     }
 
-    if !opts.data_only && !table_filter_active {
+    if emit_schema && !table_filter_active {
         // Skip views entirely in table-filter mode: a view may reference
         // tables that are not included in the dump, causing restore failures.
         for view in &views {
@@ -563,15 +612,17 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
             out.push('\n');
         }
 
-        // Emit extended statistics.
-        for stat in &ext_stats {
-            if !dumped_schema_names.is_empty()
-                && !dumped_schema_names.contains(stat.schema.as_str())
-            {
-                continue;
+        // Emit extended statistics (suppressed by --no-statistics).
+        if !opts.no_statistics {
+            for stat in &ext_stats {
+                if !dumped_schema_names.is_empty()
+                    && !dumped_schema_names.contains(stat.schema.as_str())
+                {
+                    continue;
+                }
+                format::write_create_extended_statistics(&mut out, stat);
+                out.push('\n');
             }
-            format::write_create_extended_statistics(&mut out, stat);
-            out.push('\n');
         }
 
         // Emit triggers (per-table).
@@ -656,14 +707,21 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     }
 
     // Emit large objects.
+    // Large objects are a data-section object in real pg_dump (they carry content),
+    // but we also emit them (with empty data) in schema-only mode for compatibility.
+    // Guard: emit when emit_schema OR emit_data — this makes --section=data include LOs
+    // (previously they were only emitted under emit_schema, so --section=data silently
+    // dropped them).
     // Included when: no --no-large-objects AND (no schema filter OR --large-objects).
-    if !opts.data_only && !opts.no_large_objects && (opts.schemas.is_empty() || opts.large_objects)
+    if (emit_schema || emit_data)
+        && !opts.no_large_objects
+        && (opts.schemas.is_empty() || opts.large_objects)
     {
         let large_objects = catalog::get_large_objects(&client)
             .await
             .context("failed to query large objects")?;
         if !large_objects.is_empty() {
-            let include_data = !opts.schema_only;
+            let include_data = emit_data;
             for lo in &large_objects {
                 format::write_create_large_object(&mut out, lo, include_data);
                 format::write_alter_large_object_owner(&mut out, lo);
@@ -681,7 +739,7 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     }
 
     // Emit row-level security policies.
-    if !opts.data_only && !table_filter_active && !opts.no_policies {
+    if emit_schema && !table_filter_active && !opts.no_policies {
         let policies = catalog::get_policies(&client, opts)
             .await
             .context("failed to query policies")?;
@@ -707,7 +765,7 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     }
 
     // Emit COMMENT ON statements.
-    if !opts.data_only && !table_filter_active {
+    if emit_schema && !table_filter_active {
         let comments = catalog::get_comments(&client, opts)
             .await
             .context("failed to query comments")?;
@@ -830,6 +888,27 @@ pub async fn dump_custom(opts: &DumpOptions) -> Result<Vec<u8>> {
         }
     });
 
+    // Apply --role: SET ROLE before running any queries.
+    if let Some(ref role) = opts.role {
+        let set_role_sql = format!("SET ROLE {}", catalog::quote_ident(role));
+        client
+            .execute(set_role_sql.as_str(), &[])
+            .await
+            .with_context(|| format!("failed to SET ROLE {role}"))?;
+    }
+
+    // Compute section flags (mirrors dump_plain logic).
+    let (emit_schema, emit_data) = if opts.statistics_only {
+        (false, false)
+    } else {
+        match opts.section.as_deref() {
+            Some("pre-data") => (true, false),
+            Some("data") => (false, true),
+            Some("post-data") => (false, false),
+            _ => (!opts.data_only, !opts.schema_only),
+        }
+    };
+
     let tables = catalog::get_tables(&client, opts)
         .await
         .context("failed to query catalog")?;
@@ -839,7 +918,7 @@ pub async fn dump_custom(opts: &DumpOptions) -> Result<Vec<u8>> {
     let mut next_id = 1i32;
 
     for table in &tables {
-        if !opts.data_only {
+        if emit_schema {
             // Query sequences owned by this table's columns.
             let seq_ddls = get_sequences_for_table(&client, table).await?;
             for (seq_name, seq_ddl) in seq_ddls {
@@ -851,7 +930,7 @@ pub async fn dump_custom(opts: &DumpOptions) -> Result<Vec<u8>> {
 
             // Schema entry: CREATE TABLE
             let mut ddl = String::new();
-            format::write_create_table(&mut ddl, table);
+            format::write_create_table(&mut ddl, table, opts);
             let entry = TocEntry::schema(next_id, &table.name, "TABLE", &ddl, &table.schema);
             schema_entries.push(entry);
             next_id += 1;
@@ -861,7 +940,7 @@ pub async fn dump_custom(opts: &DumpOptions) -> Result<Vec<u8>> {
     // Collect data: build COPY strings for each table.
     let mut table_data: Vec<(TocEntry, Vec<u8>)> = Vec::new();
 
-    if !opts.schema_only {
+    if emit_data {
         // Map namespace.tag → schema dump_id for dependencies.
         // Use qualified key to avoid collision when two schemas have same-named tables.
         let schema_id_map: std::collections::HashMap<String, i32> = schema_entries

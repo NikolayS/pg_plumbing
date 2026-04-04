@@ -140,6 +140,26 @@ struct Cli {
     #[arg(long = "no-policies")]
     no_policies: bool,
 
+    /// Do not dump subscriptions
+    #[arg(long = "no-subscriptions")]
+    no_subscriptions: bool,
+
+    /// Do not include commands to set table access method (USING clause)
+    #[arg(long = "no-table-access-method")]
+    no_table_access_method: bool,
+
+    /// Do not include TOAST compression settings
+    #[arg(long = "no-toast-compression")]
+    no_toast_compression: bool,
+
+    /// Dump only this section (pre-data, data, or post-data)
+    #[arg(long = "section")]
+    section: Option<String>,
+
+    /// Set role name to SET ROLE before dumping
+    #[arg(long = "role")]
+    role: Option<String>,
+
     // ---- Connection options ----
     /// Database server host or socket directory (overrides PGHOST)
     #[arg(short = 'h', long = "host")]
@@ -244,6 +264,14 @@ fn main() {
     if cli.clean && cli.data_only {
         eprintln!("pg_dump: error: options -c/--clean and -a/--data-only cannot be used together");
         std::process::exit(1);
+    }
+
+    // --section must be pre-data, data, or post-data
+    if let Some(ref sec) = cli.section {
+        if !matches!(sec.as_str(), "pre-data" | "data" | "post-data") {
+            eprintln!("pg_dump: error: unrecognized section name: \"{sec}\"");
+            std::process::exit(1);
+        }
     }
 
     // --if-exists requires --clean
@@ -355,6 +383,13 @@ fn main() {
         no_large_objects: cli.no_large_objects,
         large_objects: cli.large_objects,
         no_policies: cli.no_policies,
+        no_subscriptions: cli.no_subscriptions,
+        no_table_access_method: cli.no_table_access_method,
+        no_toast_compression: cli.no_toast_compression,
+        no_statistics: cli.no_statistics,
+        statistics_only: cli.statistics_only,
+        section: cli.section.clone(),
+        role: cli.role.clone(),
     };
 
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
