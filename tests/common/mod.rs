@@ -218,6 +218,30 @@ pub fn drop_test_db(dbname: &str) {
     let _ = cmd.output();
 }
 
+/// Set up the view test schema. Requires setup_test_schema() to have run first.
+/// Uses OnceLock to avoid poisoning.
+pub fn setup_view_schema() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        let conninfo = test_conninfo("postgres");
+        let password = std::env::var("PGPASSWORD").unwrap_or_default();
+        let sql = "CREATE OR REPLACE VIEW dump_test_view AS \
+                   SELECT id, name FROM dump_test_simple;";
+        let mut cmd = Command::new("psql");
+        cmd.arg(&conninfo).arg("-c").arg(sql);
+        if !password.is_empty() {
+            cmd.env("PGPASSWORD", &password);
+        }
+        let output = cmd.output().expect("psql setup_view failed");
+        assert!(
+            output.status.success(),
+            "setup_view failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    });
+}
+
 /// Set up the parallel-dump test schema (partitioned tables + enum type).
 /// Uses OnceLock to avoid poisoning.
 pub fn setup_parallel_test_schema() {

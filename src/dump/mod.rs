@@ -68,6 +68,15 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     let tables = catalog::get_tables(&client, opts)
         .await
         .context("failed to query catalog")?;
+    let sequences = catalog::get_sequences(&client, opts)
+        .await
+        .context("failed to query sequences")?;
+    let views = catalog::get_views(&client, opts)
+        .await
+        .context("failed to query views")?;
+    let schemas = catalog::get_schemas(&client, opts)
+        .await
+        .context("failed to query schemas")?;
 
     let mut out = String::new();
 
@@ -121,6 +130,61 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     out.push_str("SET client_min_messages = warning;\n");
     out.push_str("SET row_security = off;\n\n");
 
+    // When a table filter is active (-t), we only want objects directly tied
+    // to the selected tables.  Views and schema OWNER TO statements reference
+    // objects that may not exist in the restore target, so we skip them.
+    // Sequences are only emitted when owned by one of the selected tables.
+    let table_filter_active = !opts.tables.is_empty();
+
+    // Set of table names actually being dumped — used to filter sequences.
+    let dumped_table_names: std::collections::HashSet<&str> =
+        tables.iter().map(|t| t.name.as_str()).collect();
+
+    // Compute schemas that have at least one table being dumped.
+    let dumped_schema_names: std::collections::HashSet<&str> =
+        tables.iter().map(|t| t.schema.as_str()).collect();
+
+    if !opts.data_only {
+        for seq in &sequences {
+            if table_filter_active {
+                // In table-filter mode, only emit sequences owned by a
+                // selected table.  Standalone sequences and sequences owned
+                // by other tables are skipped.
+                match &seq.owned_by_table {
+                    Some(t) if dumped_table_names.contains(t.as_str()) => {}
+                    _ => continue,
+                }
+            } else {
+                // Full-DB or schema-filter dump: skip sequences from schemas
+                // not represented in this dump.
+                if !dumped_schema_names.is_empty()
+                    && !dumped_schema_names.contains(seq.schema.as_str())
+                {
+                    continue;
+                }
+            }
+            format::write_create_sequence(&mut out, seq);
+            out.push('\n');
+            format::write_alter_sequence(&mut out, seq);
+        }
+
+        // Emit ALTER SCHEMA ... OWNER TO only for full-DB or schema-filtered
+        // dumps.  A table-specific dump (-t) must not emit schema ownership
+        // because the schema may not exist in the restore target.
+        if !table_filter_active {
+            let mut emitted_schema = false;
+            for schema in &schemas {
+                if dumped_schema_names.contains(schema.name.as_str()) {
+                    format::write_alter_schema_owner(&mut out, schema);
+                    emitted_schema = true;
+                }
+            }
+            if emitted_schema {
+                out.push('\n');
+            }
+        }
+    }
+
     for table in &tables {
         if !opts.data_only {
             // --clean: emit DROP statement before each CREATE TABLE
@@ -133,6 +197,7 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
                 }
             }
             format::write_create_table(&mut out, table);
+            format::write_alter_table_owner(&mut out, table);
             out.push('\n');
         }
 
@@ -144,6 +209,20 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
                 format::write_table_data(&mut out, &client, table, opts).await?;
                 out.push('\n');
             }
+        }
+    }
+
+    if !opts.data_only && !table_filter_active {
+        // Skip views entirely in table-filter mode: a view may reference
+        // tables that are not included in the dump, causing restore failures.
+        for view in &views {
+            if !dumped_schema_names.is_empty()
+                && !dumped_schema_names.contains(view.schema.as_str())
+            {
+                continue;
+            }
+            format::write_create_view(&mut out, view);
+            out.push('\n');
         }
     }
 
