@@ -137,11 +137,8 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
 
         if !opts.schema_only {
             // Skip data for tables matching --exclude-table-data patterns.
-            let skip_data = filter::matches_any(
-                &opts.exclude_table_data,
-                &table.schema,
-                &table.name,
-            );
+            let skip_data =
+                filter::matches_any(&opts.exclude_table_data, &table.schema, &table.name);
             if !skip_data {
                 format::write_table_data(&mut out, &client, table, opts).await?;
                 out.push('\n');

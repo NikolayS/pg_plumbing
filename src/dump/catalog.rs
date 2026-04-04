@@ -154,9 +154,7 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
         let parent_schema: Option<String> = row.get("parent_schema");
 
         // Schema inclusion filter (supports glob patterns).
-        if !opts.schemas.is_empty()
-            && !super::filter::schema_matches_any(&opts.schemas, schema)
-        {
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
             continue;
         }
         // Schema exclusion filter (supports glob patterns).
