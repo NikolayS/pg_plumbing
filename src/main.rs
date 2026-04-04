@@ -79,11 +79,11 @@ pub struct PgDumpArgs {
     exclude_table_data: Vec<String>,
 
     /// Suppress output of ownership changes.
-    #[arg(long = "no-owner")]
+    #[arg(short = 'O', long = "no-owner")]
     no_owner: bool,
 
     /// Suppress output of access privileges.
-    #[arg(long = "no-privileges", alias = "no-acl")]
+    #[arg(short = 'x', long = "no-privileges", alias = "no-acl")]
     no_privileges: bool,
 
     /// Number of parallel jobs for directory format.

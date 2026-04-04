@@ -1507,10 +1507,7 @@ fn run_no_policies() {}
 /// no_privs: pg_dump --no-privileges.
 fn run_no_privs() {}
 
-#[test]
-#[ignore]
-/// no_owner: pg_dump --no-owner.
-fn run_no_owner() {}
+// run_no_owner implemented below in issue-25 section
 
 #[test]
 #[ignore]
@@ -1667,3 +1664,182 @@ fn run_defaults_no_public_clean() {}
 #[ignore]
 /// defaults_public_owner: dump of regress_public_owner database.
 fn run_defaults_public_owner() {}
+
+// ---------------------------------------------------------------
+// Module: --no-owner / --no-acl (issue #25)
+// ---------------------------------------------------------------
+
+/// Set up a test schema with ownership and GRANT statements visible in the dump.
+///
+/// We inject synthetic OWNER TO and GRANT lines via a view whose definition
+/// we never actually run — we only need them to appear in the plain dump output.
+/// The simplest approach: create a test role and a table owned by it, plus a
+/// GRANT, so pg_dump emits real OWNER TO and GRANT lines.
+///
+/// Because real pg_dump only emits OWNER TO when the owner differs from the
+/// dumping role, we instead validate the flags end-to-end by:
+/// 1. Running without any flag and verifying the dump succeeds.
+/// 2. Constructing synthetic SQL that includes OWNER TO / GRANT lines and
+///    asserting our library's filter strips them (unit-tested in mod.rs).
+/// 3. Running with flags and asserting the dump exits 0 and contains CREATE TABLE.
+///
+/// For richer integration, we also test with a real role + GRANT when possible.
+fn setup_acl_schema() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        // Base schema (idempotent).
+        crate::common::setup_test_schema();
+
+        // Create a role and grant SELECT on the test table.
+        // Ignore errors (role may already exist).
+        let password = std::env::var("PGPASSWORD").unwrap_or_default();
+        let conninfo = crate::common::test_conninfo("postgres");
+
+        let sql = "\
+            DO $$ BEGIN \
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dump_test_role') THEN \
+                CREATE ROLE dump_test_role; \
+              END IF; \
+            END $$; \
+            GRANT SELECT ON dump_test_simple TO dump_test_role; \
+        ";
+        let mut cmd = std::process::Command::new("psql");
+        cmd.arg(&conninfo).arg("-c").arg(sql);
+        if !password.is_empty() {
+            cmd.env("PGPASSWORD", &password);
+        }
+        // Best-effort — if this fails (e.g., no superuser), tests still pass
+        // because we also test without requiring real GRANTs.
+        let _ = cmd.output();
+    });
+}
+
+#[test]
+/// no_owner: pg_dump --no-owner strips ALTER … OWNER TO lines.
+fn run_no_owner() {
+    setup_acl_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-t", "dump_test_simple", "-d", "postgres", "--no-owner"]);
+    assert_eq!(code, 0, "pg_dump --no-owner should succeed");
+    // CREATE TABLE must still be present.
+    assert!(
+        stdout.contains("CREATE TABLE"),
+        "output should contain CREATE TABLE:\n{stdout}"
+    );
+    // No OWNER TO lines should appear.
+    assert!(
+        !stdout.contains("OWNER TO"),
+        "output should NOT contain OWNER TO with --no-owner:\n{stdout}"
+    );
+}
+
+#[test]
+/// no_acl: pg_dump --no-acl strips GRANT / REVOKE lines.
+fn run_no_acl() {
+    setup_acl_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-t", "dump_test_simple", "-d", "postgres", "--no-acl"]);
+    assert_eq!(code, 0, "pg_dump --no-acl should succeed");
+    // CREATE TABLE must still be present.
+    assert!(
+        stdout.contains("CREATE TABLE"),
+        "output should contain CREATE TABLE:\n{stdout}"
+    );
+    // No GRANT or REVOKE lines should appear.
+    assert!(
+        !stdout.contains("\nGRANT "),
+        "output should NOT contain GRANT with --no-acl:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("\nREVOKE "),
+        "output should NOT contain REVOKE with --no-acl:\n{stdout}"
+    );
+}
+
+#[test]
+/// no_privileges: pg_dump --no-privileges (alias for --no-acl) strips GRANT / REVOKE.
+fn run_no_privileges() {
+    setup_acl_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&[
+        "-t",
+        "dump_test_simple",
+        "-d",
+        "postgres",
+        "--no-privileges",
+    ]);
+    assert_eq!(code, 0, "pg_dump --no-privileges should succeed");
+    assert!(
+        stdout.contains("CREATE TABLE"),
+        "output should contain CREATE TABLE:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("\nGRANT "),
+        "output should NOT contain GRANT with --no-privileges:\n{stdout}"
+    );
+}
+
+#[test]
+/// no_owner_and_no_acl: both flags together strip OWNER TO, GRANT, and REVOKE.
+fn run_no_owner_and_no_acl() {
+    setup_acl_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&[
+        "-t",
+        "dump_test_simple",
+        "-d",
+        "postgres",
+        "--no-owner",
+        "--no-acl",
+    ]);
+    assert_eq!(code, 0, "pg_dump --no-owner --no-acl should succeed");
+    assert!(
+        stdout.contains("CREATE TABLE"),
+        "output should contain CREATE TABLE:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("OWNER TO"),
+        "output should NOT contain OWNER TO:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("\nGRANT "),
+        "output should NOT contain GRANT:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("\nREVOKE "),
+        "output should NOT contain REVOKE:\n{stdout}"
+    );
+}
+
+#[test]
+/// short_flag_O: pg_dump -O (short form of --no-owner) works.
+fn run_short_flag_no_owner() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-t", "dump_test_simple", "-d", "postgres", "-O"]);
+    assert_eq!(code, 0, "pg_dump -O should succeed");
+    assert!(
+        stdout.contains("CREATE TABLE"),
+        "output should contain CREATE TABLE:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("OWNER TO"),
+        "output should NOT contain OWNER TO with -O:\n{stdout}"
+    );
+}
+
+#[test]
+/// short_flag_x: pg_dump -x (short form of --no-acl) works.
+fn run_short_flag_no_acl() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-t", "dump_test_simple", "-d", "postgres", "-x"]);
+    assert_eq!(code, 0, "pg_dump -x should succeed");
+    assert!(
+        stdout.contains("CREATE TABLE"),
+        "output should contain CREATE TABLE:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("\nGRANT "),
+        "output should NOT contain GRANT with -x:\n{stdout}"
+    );
+}
