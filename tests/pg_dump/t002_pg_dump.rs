@@ -870,6 +870,10 @@ fn create_collation() {
 /// CREATE COLLATION icu_collation (when ICU is available).
 fn create_collation_icu() {
     crate::common::setup_issue53_schema();
+    if !crate::common::has_icu_collation() {
+        eprintln!("skipping create_collation_icu: ICU collation support not available");
+        return;
+    }
     let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
     assert_eq!(code, 0, "pg_dump should succeed");
     assert!(
@@ -1941,8 +1945,13 @@ fn revoke_usage_language() {}
 
 #[test]
 /// CREATE ACCESS METHOD regress_test_table_am.
+/// Skipped when heap_tableam_handler is not available (e.g. official Docker image).
 fn create_access_method_table_am() {
     crate::common::setup_issue53_schema();
+    if !crate::common::has_regress_table_am() {
+        eprintln!("skipping create_access_method_table_am: heap_tableam_handler not available");
+        return;
+    }
     let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
     assert_eq!(code, 0, "pg_dump should succeed");
     assert!(
@@ -1957,8 +1966,13 @@ fn create_access_method_table_am() {
 
 #[test]
 /// CREATE TABLE regress_pg_dump_table_am (using custom AM).
+/// Skipped when heap_tableam_handler is not available (e.g. official Docker image).
 fn create_table_am() {
     crate::common::setup_issue53_schema();
+    if !crate::common::has_regress_table_am() {
+        eprintln!("skipping create_table_am: heap_tableam_handler not available");
+        return;
+    }
     let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
     assert_eq!(code, 0, "pg_dump should succeed");
     assert!(

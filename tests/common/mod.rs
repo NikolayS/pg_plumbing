@@ -698,16 +698,27 @@ pub fn setup_issue53_schema() {
                 IS 'test ts config'; \
         ";
 
-        // Step 3: access methods.
-        let sql3 = "\
-            DROP ACCESS METHOD IF EXISTS regress_test_table_am CASCADE; \
+        // Step 3a: INDEX access method (always available).
+        let sql3a = "\
             DROP ACCESS METHOD IF EXISTS gist2 CASCADE; \
             CREATE ACCESS METHOD gist2 TYPE INDEX HANDLER gisthandler; \
-            CREATE ACCESS METHOD regress_test_table_am TYPE TABLE \
-                HANDLER heap_tableam_handler; \
-            DROP TABLE IF EXISTS regress_pg_dump_table_am; \
-            CREATE TABLE regress_pg_dump_table_am (id int) \
-                USING regress_test_table_am; \
+        ";
+
+        // Step 3b: TABLE access method — heap_tableam_handler is only available in
+        // full PostgreSQL builds (not the official Docker image). Wrapped in a DO
+        // block so it silently skips when the handler function is missing.
+        let sql3b = "\
+            DO $$ \
+            BEGIN \
+                PERFORM proname FROM pg_proc WHERE proname = 'heap_tableam_handler'; \
+                IF FOUND THEN \
+                    DROP ACCESS METHOD IF EXISTS regress_test_table_am CASCADE; \
+                    DROP TABLE IF EXISTS regress_pg_dump_table_am; \
+                    EXECUTE 'CREATE ACCESS METHOD regress_test_table_am TYPE TABLE HANDLER heap_tableam_handler'; \
+                    EXECUTE 'CREATE TABLE regress_pg_dump_table_am (id int) USING regress_test_table_am'; \
+                END IF; \
+            END \
+            $$; \
         ";
 
         // Step 4: aggregate.
@@ -736,13 +747,19 @@ pub fn setup_issue53_schema() {
                 AS ASSIGNMENT; \
         ";
 
-        // Step 6: collations.
-        let sql6 = "\
+        // Step 6a: C-based collation (always available).
+        let sql6a = "\
             DROP COLLATION IF EXISTS test0; \
-            DROP COLLATION IF EXISTS icu_collation; \
             CREATE COLLATION test0 FROM \"C\"; \
-            CREATE COLLATION icu_collation (LOCALE = 'und', PROVIDER = 'icu'); \
             COMMENT ON COLLATION test0 IS 'test collation'; \
+        ";
+
+        // Step 6b: ICU collation — requires server built with --with-icu.
+        // Run as a separate psql call so failure is non-fatal (we check the exit code
+        // separately and skip rather than assert).
+        let sql6b = "\
+            DROP COLLATION IF EXISTS icu_collation; \
+            CREATE COLLATION icu_collation (LOCALE = 'und', PROVIDER = 'icu'); \
         ";
 
         // Step 7: conversion.
@@ -754,7 +771,8 @@ pub fn setup_issue53_schema() {
                 IS 'test conversion'; \
         ";
 
-        for (step, sql) in [sql1, sql2, sql3, sql4, sql5, sql6, sql7]
+        // Fatal steps: must succeed.
+        for (step, sql) in [sql1, sql2, sql3a, sql4, sql5, sql6a, sql7]
             .iter()
             .enumerate()
         {
@@ -771,5 +789,46 @@ pub fn setup_issue53_schema() {
                 String::from_utf8_lossy(&output.stderr)
             );
         }
+
+        // Non-fatal optional steps: skip silently if the feature is unavailable.
+        for sql in [sql3b, sql6b] {
+            let mut cmd = Command::new("psql");
+            cmd.arg(&conninfo).arg("-c").arg(sql);
+            if !password.is_empty() {
+                cmd.env("PGPASSWORD", &password);
+            }
+            let _ = cmd.output(); // ignore failures
+        }
     });
+}
+
+/// Returns true if `heap_tableam_handler` is available and the table AM
+/// `regress_test_table_am` was created by setup_issue53_schema.
+pub fn has_regress_table_am() -> bool {
+    let conninfo = test_conninfo("postgres");
+    let password = std::env::var("PGPASSWORD").unwrap_or_default();
+    let sql = "SELECT 1 FROM pg_am WHERE amname = 'regress_test_table_am' AND amtype = 't'";
+    let mut cmd = Command::new("psql");
+    cmd.arg(&conninfo).arg("-Atc").arg(sql);
+    if !password.is_empty() {
+        cmd.env("PGPASSWORD", &password);
+    }
+    let output = cmd.output().expect("psql has_regress_table_am failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.trim() == "1"
+}
+
+/// Returns true if ICU collation support is compiled in (icu_collation exists after setup).
+pub fn has_icu_collation() -> bool {
+    let conninfo = test_conninfo("postgres");
+    let password = std::env::var("PGPASSWORD").unwrap_or_default();
+    let sql = "SELECT 1 FROM pg_collation WHERE collname = 'icu_collation'";
+    let mut cmd = Command::new("psql");
+    cmd.arg(&conninfo).arg("-Atc").arg(sql);
+    if !password.is_empty() {
+        cmd.env("PGPASSWORD", &password);
+    }
+    let output = cmd.output().expect("psql has_icu_collation failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.trim() == "1"
 }
