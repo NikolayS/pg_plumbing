@@ -92,6 +92,22 @@ struct Cli {
     #[arg(short = 't', long = "table")]
     table: Vec<String>,
 
+    /// Do not dump the named table(s) (can be specified multiple times)
+    #[arg(short = 'T', long = "exclude-table")]
+    exclude_table: Vec<String>,
+
+    /// Dump only the named schema(s) (can be specified multiple times)
+    #[arg(short = 'n', long = "schema")]
+    schema: Vec<String>,
+
+    /// Do not dump the named schema(s) (can be specified multiple times)
+    #[arg(short = 'N', long = "exclude-schema")]
+    exclude_schema: Vec<String>,
+
+    /// Do not dump data for the named table(s) (can be specified multiple times)
+    #[arg(long = "exclude-table-data")]
+    exclude_table_data: Vec<String>,
+
     /// Include CREATE DATABASE + \connect in the output
     #[arg(short = 'C', long = "create")]
     create: bool,
@@ -264,9 +280,10 @@ fn main() {
         inserts: cli.inserts || cli.column_inserts || cli.rows_per_insert.is_some(),
         column_inserts: cli.column_inserts,
         rows_per_insert: cli.rows_per_insert.map(|v| v as u32),
-        schemas: Vec::new(),
-        exclude_schemas: Vec::new(),
-        exclude_tables: Vec::new(),
+        schemas: cli.schema.clone(),
+        exclude_schemas: cli.exclude_schema.clone(),
+        exclude_tables: cli.exclude_table.clone(),
+        exclude_table_data: cli.exclude_table_data.clone(),
         no_owner: false,
         no_privileges: false,
         jobs: cli

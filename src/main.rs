@@ -74,6 +74,10 @@ pub struct PgDumpArgs {
     #[arg(short = 'T', long = "exclude-table")]
     exclude_table: Vec<String>,
 
+    /// Do not dump data for the named table(s) (schema is still dumped).
+    #[arg(long = "exclude-table-data")]
+    exclude_table_data: Vec<String>,
+
     /// Suppress output of ownership changes.
     #[arg(long = "no-owner")]
     no_owner: bool,
@@ -175,6 +179,7 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
         schemas: args.schema,
         exclude_schemas: args.exclude_schema,
         exclude_tables: args.exclude_table,
+        exclude_table_data: args.exclude_table_data,
         no_owner: args.no_owner,
         no_privileges: args.no_privileges,
         jobs: args.jobs.unwrap_or(1).max(1),

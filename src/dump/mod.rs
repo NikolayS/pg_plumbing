@@ -35,6 +35,8 @@ pub struct DumpOptions {
     pub exclude_schemas: Vec<String>,
     /// Tables to exclude.
     pub exclude_tables: Vec<String>,
+    /// Tables whose data should be excluded (schema dumped, data skipped).
+    pub exclude_table_data: Vec<String>,
     /// Suppress ownership statements.
     pub no_owner: bool,
     /// Suppress privilege statements.
@@ -134,8 +136,16 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
         }
 
         if !opts.schema_only {
-            format::write_table_data(&mut out, &client, table, opts).await?;
-            out.push('\n');
+            // Skip data for tables matching --exclude-table-data patterns.
+            let skip_data = filter::matches_any(
+                &opts.exclude_table_data,
+                &table.schema,
+                &table.name,
+            );
+            if !skip_data {
+                format::write_table_data(&mut out, &client, table, opts).await?;
+                out.push('\n');
+            }
         }
     }
 
