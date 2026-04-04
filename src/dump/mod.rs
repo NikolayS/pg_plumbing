@@ -224,6 +224,18 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
             format::write_create_view(&mut out, view);
             out.push('\n');
         }
+
+        // Emit GRANT privilege statements.  Skip in table-filter mode because
+        // the restore target may not have all referenced objects.
+        if !opts.no_privileges {
+            let privileges = catalog::get_privileges(&client, opts)
+                .await
+                .context("failed to query privileges")?;
+            if !privileges.is_empty() {
+                format::write_privileges(&mut out, &privileges);
+                out.push('\n');
+            }
+        }
     }
 
     // Emit COMMENT ON statements.

@@ -6,7 +6,9 @@
 use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
-use super::catalog::{quote_ident, ConstraintInfo, SchemaInfo, SequenceInfo, TableInfo, ViewInfo};
+use super::catalog::{
+    quote_ident, ConstraintInfo, PrivilegeInfo, SchemaInfo, SequenceInfo, TableInfo, ViewInfo,
+};
 use super::DumpOptions;
 
 /// Write a `CREATE TABLE` statement to the output buffer, followed by any
@@ -209,6 +211,14 @@ pub fn write_comments(out: &mut String, comments: &[super::catalog::CommentInfo]
             "COMMENT ON {} {} IS '{}';\n",
             c.object_type, c.object_name, escaped
         ));
+    }
+}
+
+/// Write GRANT privilege statements to the output buffer.
+pub fn write_privileges(out: &mut String, privs: &[PrivilegeInfo]) {
+    for p in privs {
+        out.push_str(&p.statement);
+        out.push('\n');
     }
 }
 

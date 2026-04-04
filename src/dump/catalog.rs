@@ -441,6 +441,154 @@ pub async fn get_views(client: &Client, opts: &DumpOptions) -> Result<Vec<ViewIn
     Ok(views)
 }
 
+/// Metadata for a privilege statement.
+#[derive(Debug, Clone)]
+pub struct PrivilegeInfo {
+    /// The privilege statement (e.g., `GRANT SELECT ON TABLE public.foo TO PUBLIC;`).
+    pub statement: String,
+}
+
+/// Parse a PostgreSQL ACL entry (`"grantee=privs/grantor"`) into (grantee_name, privileges).
+///
+/// An empty grantee means the `PUBLIC` pseudo-role.
+pub fn parse_acl_entry(entry: &str) -> Option<(String, Vec<String>)> {
+    let eq_pos = entry.find('=')?;
+    let grantee = &entry[..eq_pos];
+    let after_eq = &entry[eq_pos + 1..];
+    let slash_pos = after_eq.find('/')?;
+    let privs_str = &after_eq[..slash_pos];
+
+    let grantee_name = if grantee.is_empty() {
+        "PUBLIC".to_string()
+    } else {
+        quote_ident(grantee)
+    };
+
+    let mut privs = Vec::new();
+    for c in privs_str.chars() {
+        match c {
+            'r' => privs.push("SELECT".to_string()),
+            'w' => privs.push("UPDATE".to_string()),
+            'a' => privs.push("INSERT".to_string()),
+            'd' => privs.push("DELETE".to_string()),
+            'D' => privs.push("TRUNCATE".to_string()),
+            'x' => privs.push("REFERENCES".to_string()),
+            't' => privs.push("TRIGGER".to_string()),
+            'U' => privs.push("USAGE".to_string()),
+            'C' => privs.push("CREATE".to_string()),
+            'c' => privs.push("CONNECT".to_string()),
+            'T' => privs.push("TEMPORARY".to_string()),
+            'X' => privs.push("EXECUTE".to_string()),
+            '*' => {} // grant option — skip
+            _ => {}
+        }
+    }
+
+    if privs.is_empty() {
+        return None;
+    }
+
+    Some((grantee_name, privs))
+}
+
+/// Query ACLs for tables/views and schemas; return GRANT statements.
+pub async fn get_privileges(client: &Client, opts: &DumpOptions) -> Result<Vec<PrivilegeInfo>> {
+    let mut result = Vec::new();
+
+    // Table / view ACLs.
+    let rows = client
+        .query(
+            "SELECT n.nspname, c.relname, c.relkind::text as relkind,
+                    array_to_string(c.relacl, ',') as acl_str
+             FROM pg_catalog.pg_class c
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relkind IN ('r', 'p', 'v')
+               AND c.relacl IS NOT NULL
+               AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+             ORDER BY n.nspname, c.relname",
+            &[],
+        )
+        .await
+        .context("query table acls")?;
+
+    for row in &rows {
+        let nspname: &str = row.get("nspname");
+        let relname: &str = row.get("relname");
+        let relkind: &str = row.get("relkind");
+        let acl_str: &str = row.get("acl_str");
+
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, nspname) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, nspname) {
+            continue;
+        }
+
+        let obj_type = if relkind == "v" { "VIEW" } else { "TABLE" };
+        let qname = format!("{}.{}", quote_ident(nspname), quote_ident(relname));
+
+        for entry in acl_str.split(',') {
+            if entry.is_empty() {
+                continue;
+            }
+            if let Some((grantee, privileges)) = parse_acl_entry(entry) {
+                result.push(PrivilegeInfo {
+                    statement: format!(
+                        "GRANT {} ON {} {} TO {};",
+                        privileges.join(", "),
+                        obj_type,
+                        qname,
+                        grantee
+                    ),
+                });
+            }
+        }
+    }
+
+    // Schema ACLs.
+    let schema_rows = client
+        .query(
+            "SELECT n.nspname, array_to_string(n.nspacl, ',') as acl_str
+             FROM pg_catalog.pg_namespace n
+             WHERE n.nspacl IS NOT NULL
+               AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+             ORDER BY n.nspname",
+            &[],
+        )
+        .await
+        .context("query schema acls")?;
+
+    for row in &schema_rows {
+        let nspname: &str = row.get("nspname");
+        let acl_str: &str = row.get("acl_str");
+
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, nspname) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, nspname) {
+            continue;
+        }
+
+        for entry in acl_str.split(',') {
+            if entry.is_empty() {
+                continue;
+            }
+            if let Some((grantee, privileges)) = parse_acl_entry(entry) {
+                result.push(PrivilegeInfo {
+                    statement: format!(
+                        "GRANT {} ON SCHEMA {} TO {};",
+                        privileges.join(", "),
+                        quote_ident(nspname),
+                        grantee
+                    ),
+                });
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 /// Parse a potentially qualified table name into (schema, name).
 fn parse_qualified_name(input: &str) -> (String, String) {
     if let Some((schema, name)) = input.split_once('.') {
