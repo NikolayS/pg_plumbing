@@ -85,7 +85,6 @@ pub fn setup_test_schema() {
             COMMENT ON COLUMN dump_test_simple.name IS 'person name column';\n\
             COMMENT ON SCHEMA public IS 'standard public schema';\n\
             GRANT SELECT ON TABLE dump_test_simple TO PUBLIC;\n\
-
         ";
         let mut cmd = Command::new("psql");
         cmd.arg(&conninfo).arg("-c").arg(sql);
