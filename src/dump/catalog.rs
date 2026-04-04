@@ -59,6 +59,10 @@ pub struct ColumnInfo {
     pub storage_override: Option<char>,
     /// Column-level `n_distinct` option from `attoptions`, if set.
     pub n_distinct: Option<f64>,
+    /// Generated column expression: Some(expr) when attgenerated = 's' (STORED).
+    pub generated_expr: Option<String>,
+    /// Identity column: Some('a') = ALWAYS, Some('d') = BY DEFAULT, None = not identity.
+    pub identity: Option<char>,
 }
 
 /// Metadata for a constraint.
@@ -391,6 +395,13 @@ pub async fn get_sequences(client: &Client, opts: &DumpOptions) -> Result<Vec<Se
                ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
              WHERE s.relkind = 'S'
                AND n.nspname != all($1)
+               -- Exclude identity sequences (these are emitted as ALTER TABLE ... ADD GENERATED ... AS IDENTITY)
+               AND NOT EXISTS (
+                   SELECT 1 FROM pg_catalog.pg_depend di
+                   WHERE di.objid = s.oid
+                     AND di.classid = 'pg_catalog.pg_class'::regclass
+                     AND di.deptype = 'i'
+               )
              ORDER BY n.nspname, s.relname",
             &[&excluded],
         )
@@ -649,7 +660,9 @@ async fn get_columns(client: &Client, table_oid: u32) -> Result<Vec<ColumnInfo>>
                     a.attstattarget::int4 as attstattarget, \
                     a.attstorage::text as attstorage, \
                     t.typstorage::text as typstorage, \
-                    COALESCE(array_to_string(a.attoptions, ','), '') as attoptions \
+                    COALESCE(array_to_string(a.attoptions, ','), '') as attoptions, \
+                    a.attgenerated::text as attgenerated, \
+                    a.attidentity::text as attidentity \
              from pg_catalog.pg_attribute a \
              left join pg_catalog.pg_attrdef d \
                on d.adrelid = a.attrelid and d.adnum = a.attnum \
@@ -669,6 +682,8 @@ async fn get_columns(client: &Client, table_oid: u32) -> Result<Vec<ColumnInfo>>
         let attstorage: &str = row.get("attstorage");
         let typstorage: &str = row.get("typstorage");
         let attoptions: &str = row.get("attoptions");
+        let attgenerated: &str = row.get("attgenerated");
+        let attidentity: &str = row.get("attidentity");
 
         // Determine storage override: only emit if different from type default.
         let storage_override = if attstorage != typstorage {
@@ -688,14 +703,40 @@ async fn get_columns(client: &Client, table_oid: u32) -> Result<Vec<ColumnInfo>>
             _ => None,
         };
 
+        // Generated column: attgenerated = 's' means STORED.
+        // The default_expr holds the generation expression.
+        let generated_expr = if attgenerated == "s" {
+            row.get("default_expr")
+        } else {
+            None
+        };
+
+        // For generated columns, clear default_expr so we don't also emit DEFAULT.
+        let default_expr: Option<String> = if attgenerated == "s" {
+            None
+        } else {
+            row.get("default_expr")
+        };
+
+        // Identity column: 'a' = ALWAYS, 'd' = BY DEFAULT.
+        let identity = if attidentity == "a" {
+            Some('a')
+        } else if attidentity == "d" {
+            Some('d')
+        } else {
+            None
+        };
+
         columns.push(ColumnInfo {
             name: row.get("attname"),
             type_name: row.get("type_name"),
             not_null: row.get("attnotnull"),
-            default_expr: row.get("default_expr"),
+            default_expr,
             statistics, // Some(n≥0) if explicitly set by user, None = system default
             storage_override,
             n_distinct,
+            generated_expr,
+            identity,
         });
     }
     Ok(columns)
@@ -2696,6 +2737,656 @@ pub async fn get_extensions(client: &Client) -> Result<Vec<ExtensionInfo>> {
 }
 
 // ── End Issue-53 additions ────────────────────────────────────────────────
+
+// ── Issue-54 structs and queries ────────────────────────────────────────────
+
+/// Metadata for an ENUM type.
+#[derive(Debug, Clone)]
+pub struct EnumTypeInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Type name.
+    pub name: String,
+    /// Owner role name.
+    pub owner: String,
+    /// Enum labels in order.
+    pub labels: Vec<String>,
+}
+
+impl EnumTypeInfo {
+    pub fn qualified_name(&self) -> String {
+        format!("{}.{}", quote_ident(&self.schema), quote_ident(&self.name))
+    }
+}
+
+/// Metadata for a RANGE type.
+#[derive(Debug, Clone)]
+pub struct RangeTypeInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Type name.
+    pub name: String,
+    /// Owner role name.
+    pub owner: String,
+    /// Subtype name (qualified if needed).
+    pub subtype: String,
+    /// Subtype schema.
+    pub subtype_schema: String,
+    /// Collation name (or empty if none).
+    pub collation: String,
+    /// Collation schema (or empty).
+    pub collation_schema: String,
+    /// Canonical function (qualified, or empty).
+    pub canonical_func: String,
+    /// Subtype_diff function (qualified, or empty).
+    pub subtype_diff_func: String,
+    /// Multirange type name (qualified, or empty).
+    pub multirange_name: String,
+}
+
+impl RangeTypeInfo {
+    pub fn qualified_name(&self) -> String {
+        format!("{}.{}", quote_ident(&self.schema), quote_ident(&self.name))
+    }
+}
+
+/// A single field of a composite type.
+#[derive(Debug, Clone)]
+pub struct CompositeFieldInfo {
+    /// Field name.
+    pub name: String,
+    /// Full type name.
+    pub type_name: String,
+    /// Collation name (or empty).
+    pub collation: String,
+}
+
+/// Metadata for a COMPOSITE type.
+#[derive(Debug, Clone)]
+pub struct CompositeTypeInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Type name.
+    pub name: String,
+    /// Owner role name.
+    pub owner: String,
+    /// Fields in order.
+    pub fields: Vec<CompositeFieldInfo>,
+}
+
+impl CompositeTypeInfo {
+    pub fn qualified_name(&self) -> String {
+        format!("{}.{}", quote_ident(&self.schema), quote_ident(&self.name))
+    }
+}
+
+/// Metadata for a DOMAIN type.
+#[derive(Debug, Clone)]
+pub struct DomainInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Domain name.
+    pub name: String,
+    /// Owner role name.
+    pub owner: String,
+    /// Base type name.
+    pub base_type: String,
+    /// Default expression (or empty).
+    pub default_expr: String,
+    /// NOT NULL constraint flag.
+    pub not_null: bool,
+    /// Constraints (name, check expression).
+    pub constraints: Vec<(String, String)>,
+}
+
+impl DomainInfo {
+    pub fn qualified_name(&self) -> String {
+        format!("{}.{}", quote_ident(&self.schema), quote_ident(&self.name))
+    }
+}
+
+/// Metadata for an operator family.
+#[derive(Debug, Clone)]
+pub struct OperatorFamilyInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Operator family name.
+    pub name: String,
+    /// Owner role name.
+    pub owner: String,
+    /// Access method name.
+    pub am_name: String,
+}
+
+impl OperatorFamilyInfo {
+    pub fn qualified_name(&self) -> String {
+        format!("{}.{}", quote_ident(&self.schema), quote_ident(&self.name))
+    }
+}
+
+/// Metadata for an operator class.
+#[derive(Debug, Clone)]
+pub struct OperatorClassInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Operator class name.
+    pub name: String,
+    /// Owner role name.
+    pub owner: String,
+    /// Access method name.
+    pub am_name: String,
+    /// Operator family name (qualified).
+    pub family_name: String,
+    /// Operator family schema.
+    pub family_schema: String,
+    /// Type this operator class indexes.
+    pub type_name: String,
+    /// Whether this is the default for its type.
+    pub is_default: bool,
+}
+
+impl OperatorClassInfo {
+    pub fn qualified_name(&self) -> String {
+        format!("{}.{}", quote_ident(&self.schema), quote_ident(&self.name))
+    }
+}
+
+/// Metadata for an identity sequence (for ALTER TABLE ... ADD GENERATED ... AS IDENTITY).
+#[derive(Debug, Clone)]
+pub struct IdentitySequenceInfo {
+    /// Schema name of the table.
+    pub table_schema: String,
+    /// Table name.
+    pub table_name: String,
+    /// Column name.
+    pub column_name: String,
+    /// Identity type: 'a' = ALWAYS, 'd' = BY DEFAULT.
+    pub identity: char,
+    /// Sequence name (qualified).
+    pub seq_name: String,
+    /// Start value.
+    pub start_value: i64,
+    /// Increment.
+    pub increment_by: i64,
+    /// Minimum value (None if NO MINVALUE).
+    pub min_value: Option<i64>,
+    /// Maximum value (None if NO MAXVALUE).
+    pub max_value: Option<i64>,
+    /// Cache size.
+    pub cache_size: i64,
+    /// Whether the sequence cycles.
+    pub cycle: bool,
+}
+
+/// Query ENUM types from the catalog.
+pub async fn get_enum_types(client: &Client, opts: &DumpOptions) -> Result<Vec<EnumTypeInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname,
+                    t.typname,
+                    r.rolname AS owner,
+                    array_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
+             FROM pg_catalog.pg_type t
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+             JOIN pg_catalog.pg_roles r ON r.oid = t.typowner
+             JOIN pg_catalog.pg_enum e ON e.enumtypid = t.oid
+             WHERE t.typtype = 'e'
+               AND n.nspname != all($1)
+             GROUP BY n.nspname, t.typname, r.rolname
+             ORDER BY n.nspname, t.typname",
+            &[&excluded],
+        )
+        .await
+        .context("query enum types")?;
+
+    let mut types = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("nspname");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+        let labels: Vec<String> = row.get("labels");
+        types.push(EnumTypeInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("typname").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            labels,
+        });
+    }
+    Ok(types)
+}
+
+/// Query RANGE types from the catalog.
+pub async fn get_range_types(client: &Client, opts: &DumpOptions) -> Result<Vec<RangeTypeInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname,
+                    t.typname,
+                    r.rolname AS owner,
+                    st.typname AS subtype_name,
+                    sn.nspname AS subtype_schema,
+                    COALESCE(c.collname, '') AS collation_name,
+                    COALESCE(cn.nspname, '') AS collation_schema,
+                    COALESCE((SELECT pf.proname || '(' || pg_catalog.format_type(pf.proargtypes[0], NULL) || ')' \
+                               FROM pg_catalog.pg_proc pf WHERE pf.oid = rg.rngcanonical), '') AS canonical_func,
+                    COALESCE((SELECT pf.proname || '(' || pg_catalog.format_type(pf.proargtypes[0], NULL) || ')' \
+                               FROM pg_catalog.pg_proc pf WHERE pf.oid = rg.rngsubdiff), '') AS subtype_diff_func,
+                    COALESCE(mn.nspname || '.' || mt.typname, '') AS multirange_name
+             FROM pg_catalog.pg_type t
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+             JOIN pg_catalog.pg_roles r ON r.oid = t.typowner
+             JOIN pg_catalog.pg_range rg ON rg.rngtypid = t.oid
+             JOIN pg_catalog.pg_type st ON st.oid = rg.rngsubtype
+             JOIN pg_catalog.pg_namespace sn ON sn.oid = st.typnamespace
+             LEFT JOIN pg_catalog.pg_collation c ON c.oid = rg.rngcollation
+             LEFT JOIN pg_catalog.pg_namespace cn ON cn.oid = c.collnamespace
+             LEFT JOIN pg_catalog.pg_type mt ON mt.oid = rg.rngmultitypid
+             LEFT JOIN pg_catalog.pg_namespace mn ON mn.oid = mt.typnamespace
+             WHERE t.typtype = 'r'
+               AND n.nspname != all($1)
+             ORDER BY n.nspname, t.typname",
+            &[&excluded],
+        )
+        .await
+        .context("query range types")?;
+
+    let mut types = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("nspname");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+        types.push(RangeTypeInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("typname").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            subtype: row.get::<_, &str>("subtype_name").to_string(),
+            subtype_schema: row.get::<_, &str>("subtype_schema").to_string(),
+            collation: row.get::<_, &str>("collation_name").to_string(),
+            collation_schema: row.get::<_, &str>("collation_schema").to_string(),
+            canonical_func: row.get::<_, &str>("canonical_func").to_string(),
+            subtype_diff_func: row.get::<_, &str>("subtype_diff_func").to_string(),
+            multirange_name: row.get::<_, &str>("multirange_name").to_string(),
+        });
+    }
+    Ok(types)
+}
+
+/// Query COMPOSITE types from the catalog.
+pub async fn get_composite_types(
+    client: &Client,
+    opts: &DumpOptions,
+) -> Result<Vec<CompositeTypeInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname,
+                    t.typname,
+                    r.rolname AS owner,
+                    t.typrelid::bigint AS typrelid
+             FROM pg_catalog.pg_type t
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+             JOIN pg_catalog.pg_roles r ON r.oid = t.typowner
+             WHERE t.typtype = 'c'
+               AND n.nspname != all($1)
+               -- exclude the types that back tables/views/etc (those have relkind != 'c')
+               AND EXISTS (
+                   SELECT 1 FROM pg_catalog.pg_class c
+                   WHERE c.oid = t.typrelid AND c.relkind = 'c'
+               )
+             ORDER BY n.nspname, t.typname",
+            &[&excluded],
+        )
+        .await
+        .context("query composite types")?;
+
+    let mut types = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("nspname");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+
+        let typrelid: i64 = row.get("typrelid");
+        // Query fields.
+        let field_rows = client
+            .query(
+                "SELECT a.attname,
+                        pg_catalog.format_type(a.atttypid, a.atttypmod) AS type_name,
+                        COALESCE(c.collname, '') AS collation_name
+                 FROM pg_catalog.pg_attribute a
+                 LEFT JOIN pg_catalog.pg_collation c
+                   ON c.oid = a.attcollation
+                  AND a.attcollation <> (SELECT typcollation FROM pg_catalog.pg_type WHERE oid = a.atttypid)
+                 WHERE a.attrelid = $1::bigint::oid
+                   AND a.attnum > 0
+                   AND NOT a.attisdropped
+                 ORDER BY a.attnum",
+                &[&typrelid],
+            )
+            .await
+            .context("query composite fields")?;
+
+        let fields: Vec<CompositeFieldInfo> = field_rows
+            .iter()
+            .map(|r| CompositeFieldInfo {
+                name: r.get::<_, &str>("attname").to_string(),
+                type_name: r.get::<_, &str>("type_name").to_string(),
+                collation: r.get::<_, &str>("collation_name").to_string(),
+            })
+            .collect();
+
+        types.push(CompositeTypeInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("typname").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            fields,
+        });
+    }
+    Ok(types)
+}
+
+/// Query DOMAIN types from the catalog.
+pub async fn get_domains(client: &Client, opts: &DumpOptions) -> Result<Vec<DomainInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname,
+                    t.typname,
+                    r.rolname AS owner,
+                    pg_catalog.format_type(t.typbasetype, t.typtypmod) AS base_type,
+                    COALESCE(pg_catalog.pg_get_expr(t.typdefaultbin, 0), '') AS default_expr,
+                    t.typnotnull AS not_null,
+                    t.oid::bigint AS type_oid
+             FROM pg_catalog.pg_type t
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+             JOIN pg_catalog.pg_roles r ON r.oid = t.typowner
+             WHERE t.typtype = 'd'
+               AND n.nspname != all($1)
+             ORDER BY n.nspname, t.typname",
+            &[&excluded],
+        )
+        .await
+        .context("query domains")?;
+
+    let mut domains = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("nspname");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+
+        let type_oid: i64 = row.get("type_oid");
+        // Query constraints.
+        let con_rows = client
+            .query(
+                "SELECT conname, pg_catalog.pg_get_constraintdef(c.oid, true) AS condef
+                 FROM pg_catalog.pg_constraint c
+                 WHERE c.contypid = $1::bigint::oid
+                 ORDER BY conname",
+                &[&type_oid],
+            )
+            .await
+            .context("query domain constraints")?;
+
+        let constraints: Vec<(String, String)> = con_rows
+            .iter()
+            .map(|r| {
+                (
+                    r.get::<_, &str>("conname").to_string(),
+                    r.get::<_, &str>("condef").to_string(),
+                )
+            })
+            .collect();
+
+        domains.push(DomainInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("typname").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            base_type: row.get::<_, &str>("base_type").to_string(),
+            default_expr: row.get::<_, &str>("default_expr").to_string(),
+            not_null: row.get("not_null"),
+            constraints,
+        });
+    }
+    Ok(domains)
+}
+
+/// Query operator families from the catalog.
+pub async fn get_operator_families(
+    client: &Client,
+    opts: &DumpOptions,
+) -> Result<Vec<OperatorFamilyInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname,
+                    f.opfname,
+                    r.rolname AS owner,
+                    am.amname
+             FROM pg_catalog.pg_opfamily f
+             JOIN pg_catalog.pg_namespace n ON n.oid = f.opfnamespace
+             JOIN pg_catalog.pg_roles r ON r.oid = f.opfowner
+             JOIN pg_catalog.pg_am am ON am.oid = f.opfmethod
+             WHERE n.nspname != all($1)
+             ORDER BY n.nspname, am.amname, f.opfname",
+            &[&excluded],
+        )
+        .await
+        .context("query operator families")?;
+
+    let mut families = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("nspname");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+        families.push(OperatorFamilyInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("opfname").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            am_name: row.get::<_, &str>("amname").to_string(),
+        });
+    }
+    Ok(families)
+}
+
+/// Query operator classes from the catalog.
+pub async fn get_operator_classes(
+    client: &Client,
+    opts: &DumpOptions,
+) -> Result<Vec<OperatorClassInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname,
+                    c.opcname,
+                    r.rolname AS owner,
+                    am.amname,
+                    fn.nspname AS family_schema,
+                    f.opfname AS family_name,
+                    pg_catalog.format_type(c.opcintype, NULL) AS type_name,
+                    c.opcdefault AS is_default
+             FROM pg_catalog.pg_opclass c
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.opcnamespace
+             JOIN pg_catalog.pg_roles r ON r.oid = c.opcowner
+             JOIN pg_catalog.pg_am am ON am.oid = c.opcmethod
+             JOIN pg_catalog.pg_opfamily f ON f.oid = c.opcfamily
+             JOIN pg_catalog.pg_namespace fn ON fn.oid = f.opfnamespace
+             WHERE n.nspname != all($1)
+             ORDER BY n.nspname, am.amname, c.opcname",
+            &[&excluded],
+        )
+        .await
+        .context("query operator classes")?;
+
+    let mut classes = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("nspname");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+        classes.push(OperatorClassInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("opcname").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            am_name: row.get::<_, &str>("amname").to_string(),
+            family_schema: row.get::<_, &str>("family_schema").to_string(),
+            family_name: row.get::<_, &str>("family_name").to_string(),
+            type_name: row.get::<_, &str>("type_name").to_string(),
+            is_default: row.get("is_default"),
+        });
+    }
+    Ok(classes)
+}
+
+/// Query identity sequences from the catalog.
+/// These are sequences created by `GENERATED AS IDENTITY` columns.
+pub async fn get_identity_sequences(
+    client: &Client,
+    opts: &DumpOptions,
+) -> Result<Vec<IdentitySequenceInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT tn.nspname AS table_schema,
+                    tc.relname AS table_name,
+                    a.attname AS column_name,
+                    a.attidentity::text AS identity,
+                    sn.nspname || '.' || s.relname AS seq_name,
+                    seq.seqstart AS start_value,
+                    seq.seqincrement AS increment_by,
+                    seq.seqmin AS min_value,
+                    seq.seqmax AS max_value,
+                    seq.seqcache AS cache_size,
+                    seq.seqcycle AS cycle
+             FROM pg_catalog.pg_attribute a
+             JOIN pg_catalog.pg_class tc ON tc.oid = a.attrelid
+             JOIN pg_catalog.pg_namespace tn ON tn.oid = tc.relnamespace
+             JOIN pg_catalog.pg_depend d
+               ON d.refobjid = tc.oid
+              AND d.refobjsubid = a.attnum
+              AND d.deptype = 'i'
+              AND d.classid = 'pg_catalog.pg_class'::regclass
+             JOIN pg_catalog.pg_class s ON s.oid = d.objid AND s.relkind = 'S'
+             JOIN pg_catalog.pg_namespace sn ON sn.oid = s.relnamespace
+             JOIN pg_catalog.pg_sequence seq ON seq.seqrelid = s.oid
+             WHERE a.attidentity IN ('a', 'd')
+               AND tn.nspname != all($1)
+             ORDER BY tn.nspname, tc.relname, a.attnum",
+            &[&excluded],
+        )
+        .await
+        .context("query identity sequences")?;
+
+    let mut iseqs = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("table_schema");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+        let identity_str: &str = row.get("identity");
+        let identity = identity_str.chars().next().unwrap_or('a');
+        let min_value: i64 = row.get("min_value");
+        let max_value: i64 = row.get("max_value");
+        iseqs.push(IdentitySequenceInfo {
+            table_schema: schema.to_string(),
+            table_name: row.get::<_, &str>("table_name").to_string(),
+            column_name: row.get::<_, &str>("column_name").to_string(),
+            identity,
+            seq_name: row.get::<_, &str>("seq_name").to_string(),
+            start_value: row.get("start_value"),
+            increment_by: row.get("increment_by"),
+            // Treat 1 as NO MINVALUE and i64::MAX (or type max) as NO MAXVALUE.
+            min_value: Some(min_value),
+            max_value: Some(max_value),
+            cache_size: row.get("cache_size"),
+            cycle: row.get("cycle"),
+        });
+    }
+    Ok(iseqs)
+}
+
+// ── End Issue-54 additions ────────────────────────────────────────────────
 
 /// Quote an SQL identifier if it needs quoting.
 pub fn quote_ident(name: &str) -> String {

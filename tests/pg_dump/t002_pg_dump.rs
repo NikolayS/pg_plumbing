@@ -103,12 +103,21 @@ fn alter_server_owner() {
 fn alter_function_owner() {}
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted + needs operator family
 /// ALTER OPERATOR FAMILY dump_test.op_family OWNER TO.
-fn alter_operator_family_owner() {}
+fn alter_operator_family_owner() {
+    crate::common::setup_issue54_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER OPERATOR FAMILY")
+            && stdout.contains("op_family")
+            && stdout.contains("OWNER TO"),
+        "output should contain ALTER OPERATOR FAMILY dump_test.op_family OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted + needs operator class
+#[ignore] // not yet implemented: needs operator class creation (requires int42 type + operators)
 /// ALTER OPERATOR CLASS dump_test.op_class OWNER TO.
 fn alter_operator_class_owner() {}
 
@@ -397,14 +406,32 @@ fn alter_second_table_owner() {
 }
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted in dump output
 /// ALTER TABLE measurement OWNER TO.
-fn alter_measurement_owner() {}
+fn alter_measurement_owner() {
+    crate::common::setup_issue54_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER TABLE")
+            && stdout.contains("measurement")
+            && stdout.contains("OWNER TO"),
+        "output should contain ALTER TABLE measurement OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted in dump output
 /// ALTER TABLE measurement_y2006m2 OWNER TO.
-fn alter_measurement_partition_owner() {}
+fn alter_measurement_partition_owner() {
+    crate::common::setup_issue54_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER TABLE")
+            && stdout.contains("measurement_y2006m2")
+            && stdout.contains("OWNER TO"),
+        "output should contain ALTER TABLE measurement_y2006m2 OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
 /// ALTER FOREIGN TABLE foreign_table OWNER TO.
@@ -928,9 +955,24 @@ fn create_conversion() {
 }
 
 #[test]
-#[ignore] // not yet implemented: CREATE DOMAIN not emitted + needs dump_test schema
 /// CREATE DOMAIN dump_test.us_postal_code.
-fn create_domain() {}
+fn create_domain() {
+    crate::common::setup_issue54_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE DOMAIN") && stdout.contains("us_postal_code"),
+        "output should contain CREATE DOMAIN dump_test.us_postal_code:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("AS text"),
+        "domain should be based on text type:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("us_postal_code_check"),
+        "domain should include us_postal_code_check constraint:\n{stdout}"
+    );
+}
 
 #[test]
 /// CREATE FUNCTION dump_test.pltestlang_call_handler.
@@ -1040,12 +1082,23 @@ fn create_procedure() {
 }
 
 #[test]
-#[ignore] // not yet implemented: CREATE OPERATOR FAMILY not emitted
 /// CREATE OPERATOR FAMILY dump_test.op_family / op_family USING btree.
-fn create_operator_family() {}
+fn create_operator_family() {
+    crate::common::setup_issue54_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE OPERATOR FAMILY") && stdout.contains("op_family"),
+        "output should contain CREATE OPERATOR FAMILY dump_test.op_family:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("USING btree"),
+        "operator family should specify USING btree:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: CREATE OPERATOR CLASS not emitted
+#[ignore] // not yet implemented: needs int42 type with operators for operator class
 /// CREATE OPERATOR CLASS dump_test.op_class / op_class_custom / op_class_empty.
 fn create_operator_class() {}
 
@@ -1090,9 +1143,20 @@ fn create_trigger() {
 }
 
 #[test]
-#[ignore] // not yet implemented: CREATE TYPE ENUM not emitted + needs dump_test schema
 /// CREATE TYPE dump_test.planets AS ENUM.
-fn create_type_enum() {}
+fn create_type_enum() {
+    crate::common::setup_issue54_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TYPE") && stdout.contains("planets") && stdout.contains("AS ENUM"),
+        "output should contain CREATE TYPE dump_test.planets AS ENUM:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("'venus'") && stdout.contains("'earth'") && stdout.contains("'mars'"),
+        "ENUM type should include all labels (venus, earth, mars):\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: binary upgrade mode not supported
@@ -1100,22 +1164,46 @@ fn create_type_enum() {}
 fn create_type_enum_pg_upgrade() {}
 
 #[test]
-#[ignore] // not yet implemented: CREATE TYPE RANGE not emitted
 /// CREATE TYPE dump_test.textrange AS RANGE.
-fn create_type_range() {}
+fn create_type_range() {
+    crate::common::setup_issue54_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TYPE")
+            && stdout.contains("textrange")
+            && stdout.contains("AS RANGE"),
+        "output should contain CREATE TYPE dump_test.textrange AS RANGE:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("subtype = text"),
+        "range type should specify subtype = text:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: CREATE TYPE not emitted + needs custom type
+#[ignore] // not yet implemented: base type (int42) requires C-level functions
 /// CREATE TYPE dump_test.int42 (shell + populated).
 fn create_type_int42() {}
 
 #[test]
-#[ignore] // not yet implemented: CREATE TYPE composite not emitted
 /// CREATE TYPE dump_test.composite.
-fn create_type_composite() {}
+fn create_type_composite() {
+    crate::common::setup_issue54_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TYPE") && stdout.contains("composite"),
+        "output should contain CREATE TYPE dump_test.composite:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("f1") && stdout.contains("f2") && stdout.contains("f3"),
+        "composite type should include fields f1, f2, f3:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: CREATE TYPE shell not emitted
+#[ignore] // not yet implemented: shell type (undefined) requires special catalog support
 /// CREATE TYPE dump_test.undefined.
 fn create_type_undefined() {}
 
@@ -1538,14 +1626,40 @@ fn create_second_table() {
 }
 
 #[test]
-#[ignore] // not yet implemented: needs partitioned measurement table setup
 /// CREATE TABLE measurement PARTITIONED BY with partition and triggers.
-fn create_measurement_partitioned() {}
+fn create_measurement_partitioned() {
+    crate::common::setup_issue54_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TABLE") && stdout.contains("measurement"),
+        "output should contain CREATE TABLE measurement:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("PARTITION BY RANGE"),
+        "measurement table should be PARTITION BY RANGE:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: needs partitioned measurement table setup
 /// Partition measurement_y2006m2 creation.
-fn create_measurement_partition() {}
+fn create_measurement_partition() {
+    crate::common::setup_issue54_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("measurement_y2006m2"),
+        "output should contain measurement_y2006m2:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("PARTITION OF") && stdout.contains("measurement"),
+        "partition should use PARTITION OF measurement:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("FOR VALUES FROM"),
+        "partition should include FOR VALUES FROM clause:\n{stdout}"
+    );
+}
 
 #[test]
 /// Triggers on partitions: a trigger on test_table_part is disabled, verifying
@@ -1566,9 +1680,24 @@ fn partition_triggers() {
 }
 
 #[test]
-#[ignore] // not yet implemented: needs generated column table setup
 /// CREATE TABLE test_third_table_generated_cols.
-fn create_third_table_generated() {}
+fn create_third_table_generated() {
+    crate::common::setup_issue54_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("test_third_table_generated_cols"),
+        "output should contain test_third_table_generated_cols:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("GENERATED ALWAYS AS"),
+        "table should include GENERATED ALWAYS AS column:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("STORED"),
+        "generated column should be STORED:\n{stdout}"
+    );
+}
 
 #[test]
 /// CREATE TABLE test_fourth_table_zero_col (zero-column table).
@@ -1605,14 +1734,40 @@ fn create_fifth_sixth_seventh_tables() {
 }
 
 #[test]
-#[ignore] // not yet implemented: needs identity column table setup
 /// CREATE TABLE test_table_identity.
-fn create_table_identity() {}
+fn create_table_identity() {
+    crate::common::setup_issue54_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("test_table_identity"),
+        "output should contain test_table_identity:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("GENERATED ALWAYS AS IDENTITY"),
+        "table should include GENERATED ALWAYS AS IDENTITY column:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: needs generated column + inheritance setup
 /// CREATE TABLE test_table_generated and children (with/without local cols).
-fn create_table_generated() {}
+fn create_table_generated() {
+    crate::common::setup_issue54_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("test_table_generated"),
+        "output should contain test_table_generated:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("GENERATED ALWAYS AS"),
+        "table should include GENERATED ALWAYS AS column:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("STORED"),
+        "generated column should be STORED:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: needs table with custom statistics target

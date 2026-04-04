@@ -146,6 +146,27 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     let languages = catalog::get_languages(&client)
         .await
         .context("failed to query languages")?;
+    let enum_types = catalog::get_enum_types(&client, opts)
+        .await
+        .context("failed to query enum types")?;
+    let range_types = catalog::get_range_types(&client, opts)
+        .await
+        .context("failed to query range types")?;
+    let composite_types = catalog::get_composite_types(&client, opts)
+        .await
+        .context("failed to query composite types")?;
+    let domains = catalog::get_domains(&client, opts)
+        .await
+        .context("failed to query domains")?;
+    let operator_families = catalog::get_operator_families(&client, opts)
+        .await
+        .context("failed to query operator families")?;
+    let operator_classes = catalog::get_operator_classes(&client, opts)
+        .await
+        .context("failed to query operator classes")?;
+    let identity_sequences = catalog::get_identity_sequences(&client, opts)
+        .await
+        .context("failed to query identity sequences")?;
 
     let mut out = String::new();
 
@@ -261,6 +282,78 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
                 format::write_alter_conversion_owner(&mut out, conv);
                 out.push('\n');
             }
+
+            // Emit composite types.
+            for t in &composite_types {
+                if !dumped_schema_names.is_empty()
+                    && !dumped_schema_names.contains(t.schema.as_str())
+                {
+                    continue;
+                }
+                format::write_create_composite_type(&mut out, t);
+                format::write_alter_composite_type_owner(&mut out, t);
+                out.push('\n');
+            }
+
+            // Emit enum types.
+            for t in &enum_types {
+                if !dumped_schema_names.is_empty()
+                    && !dumped_schema_names.contains(t.schema.as_str())
+                {
+                    continue;
+                }
+                format::write_create_enum_type(&mut out, t);
+                format::write_alter_enum_type_owner(&mut out, t);
+                out.push('\n');
+            }
+
+            // Emit range types.
+            for t in &range_types {
+                if !dumped_schema_names.is_empty()
+                    && !dumped_schema_names.contains(t.schema.as_str())
+                {
+                    continue;
+                }
+                format::write_create_range_type(&mut out, t);
+                format::write_alter_range_type_owner(&mut out, t);
+                out.push('\n');
+            }
+
+            // Emit domains.
+            for d in &domains {
+                if !dumped_schema_names.is_empty()
+                    && !dumped_schema_names.contains(d.schema.as_str())
+                {
+                    continue;
+                }
+                format::write_create_domain(&mut out, d);
+                format::write_alter_domain_owner(&mut out, d);
+                out.push('\n');
+            }
+
+            // Emit operator families.
+            for f in &operator_families {
+                if !dumped_schema_names.is_empty()
+                    && !dumped_schema_names.contains(f.schema.as_str())
+                {
+                    continue;
+                }
+                format::write_create_operator_family(&mut out, f);
+                format::write_alter_operator_family_owner(&mut out, f);
+                out.push('\n');
+            }
+
+            // Emit operator classes.
+            for c in &operator_classes {
+                if !dumped_schema_names.is_empty()
+                    && !dumped_schema_names.contains(c.schema.as_str())
+                {
+                    continue;
+                }
+                format::write_create_operator_class(&mut out, c);
+                format::write_alter_operator_class_owner(&mut out, c);
+                out.push('\n');
+            }
         }
 
         for seq in &sequences {
@@ -299,6 +392,18 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
                 }
             }
             format::write_create_table(&mut out, table);
+
+            // Emit identity column definitions immediately after CREATE TABLE,
+            // so the table exists before ALTER TABLE ... ADD GENERATED is run.
+            if !table_filter_active {
+                for iseq in &identity_sequences {
+                    if iseq.table_schema == table.schema && iseq.table_name == table.name {
+                        format::write_alter_table_add_identity(&mut out, iseq);
+                        out.push('\n');
+                    }
+                }
+            }
+
             format::write_alter_table_owner(&mut out, table);
 
             // Emit column-level storage, statistics, and n_distinct overrides.

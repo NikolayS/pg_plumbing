@@ -818,6 +818,96 @@ pub fn has_regress_table_am() -> bool {
     stdout.trim() == "1"
 }
 
+/// Set up the issue-54 test schema: partitioned tables, types (ENUM, RANGE, COMPOSITE),
+/// domains, operator families, operator classes, generated/identity columns.
+/// Uses OnceLock to avoid poisoning.
+pub fn setup_issue54_schema() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        // Depends on dump_test schema existing.
+        setup_dump_test_schema();
+
+        let conninfo = test_conninfo("postgres");
+        let password = std::env::var("PGPASSWORD").unwrap_or_default();
+
+        // Step 1: ENUM type, RANGE type, COMPOSITE type, DOMAIN.
+        let sql1 = "\
+            DROP TYPE IF EXISTS dump_test.planets CASCADE; \
+            DROP TYPE IF EXISTS dump_test.textrange CASCADE; \
+            DROP TYPE IF EXISTS dump_test.composite CASCADE; \
+            DROP DOMAIN IF EXISTS dump_test.us_postal_code CASCADE; \
+            CREATE TYPE dump_test.planets AS ENUM ('venus', 'earth', 'mars'); \
+            CREATE TYPE dump_test.textrange AS RANGE (subtype = text, collation = \"C\"); \
+            CREATE TYPE dump_test.composite AS (f1 text, f2 integer, f3 boolean); \
+            CREATE DOMAIN dump_test.us_postal_code AS text \
+                CONSTRAINT us_postal_code_check CHECK ( \
+                    VALUE ~ $$^\\d{5}$$::text OR VALUE ~ $$^\\d{5}-\\d{4}$$::text \
+                ); \
+        ";
+
+        // Step 2: Operator family (operator class needs a real type with operators).
+        let sql2 = "\
+            DROP OPERATOR FAMILY IF EXISTS dump_test.op_family USING btree CASCADE; \
+            CREATE OPERATOR FAMILY dump_test.op_family USING btree; \
+        ";
+
+        // Step 3: Partitioned measurement table + partition.
+        let sql3 = "\
+            DROP TABLE IF EXISTS dump_test.measurement CASCADE; \
+            CREATE TABLE dump_test.measurement ( \
+                city_id         int not null, \
+                logdate         date not null, \
+                peaktemp        int, \
+                unitsales       int \
+            ) PARTITION BY RANGE (logdate); \
+            CREATE TABLE dump_test.measurement_y2006m2 \
+                PARTITION OF dump_test.measurement \
+                FOR VALUES FROM ('2006-02-01') TO ('2006-03-01'); \
+        ";
+
+        // Step 4: Identity column table.
+        let sql4 = "\
+            DROP TABLE IF EXISTS dump_test.test_table_identity CASCADE; \
+            CREATE TABLE dump_test.test_table_identity ( \
+                col1 int GENERATED ALWAYS AS IDENTITY PRIMARY KEY, \
+                col2 text \
+            ); \
+            INSERT INTO dump_test.test_table_identity (col2) VALUES ('identity_row'); \
+        ";
+
+        // Step 5: Generated column tables.
+        let sql5 = "\
+            DROP TABLE IF EXISTS dump_test.test_third_table_generated_cols CASCADE; \
+            DROP TABLE IF EXISTS dump_test.test_table_generated CASCADE; \
+            CREATE TABLE dump_test.test_third_table_generated_cols ( \
+                col1 int, \
+                col2 text, \
+                col3 int GENERATED ALWAYS AS (col1 * 2) STORED \
+            ); \
+            CREATE TABLE dump_test.test_table_generated ( \
+                col1 int, \
+                col2 int GENERATED ALWAYS AS (col1 + 1) STORED \
+            ); \
+        ";
+
+        for (step, sql) in [sql1, sql2, sql3, sql4, sql5].iter().enumerate() {
+            let mut cmd = Command::new("psql");
+            cmd.arg(&conninfo).arg("-c").arg(sql);
+            if !password.is_empty() {
+                cmd.env("PGPASSWORD", &password);
+            }
+            let output = cmd.output().expect("psql setup_issue54 failed");
+            assert!(
+                output.status.success(),
+                "setup_issue54_schema step {} failed: {}",
+                step + 1,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    });
+}
+
 /// Returns true if ICU collation support is compiled in (icu_collation exists after setup).
 pub fn has_icu_collation() -> bool {
     let conninfo = test_conninfo("postgres");

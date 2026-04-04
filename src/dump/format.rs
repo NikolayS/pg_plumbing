@@ -8,11 +8,12 @@ use tokio_postgres::Client;
 
 use super::catalog::{
     format_fdw_options, parse_acl_entry, quote_ident, AccessMethodInfo, AggregateInfo, CastInfo,
-    CollationInfo, ColumnInfo, ConstraintInfo, ConversionInfo, EventTriggerInfo, ExtendedStatInfo,
-    FdwInfo, ForeignServerInfo, ForeignTableInfo, FunctionInfo, LanguageInfo, LargeObjectInfo,
-    MatviewInfo, PolicyInfo, PrivilegeInfo, PublicationInfo, SchemaInfo, SequenceInfo, TableInfo,
-    TransformInfo, TriggerInfo, TsConfigInfo, TsDictInfo, TsParserInfo, TsTemplateInfo,
-    TypeCommentInfo, UserMappingInfo, ViewInfo,
+    CollationInfo, ColumnInfo, CompositeTypeInfo, ConstraintInfo, ConversionInfo, DomainInfo,
+    EnumTypeInfo, EventTriggerInfo, ExtendedStatInfo, FdwInfo, ForeignServerInfo, ForeignTableInfo,
+    FunctionInfo, IdentitySequenceInfo, LanguageInfo, LargeObjectInfo, MatviewInfo,
+    OperatorClassInfo, OperatorFamilyInfo, PolicyInfo, PrivilegeInfo, PublicationInfo,
+    RangeTypeInfo, SchemaInfo, SequenceInfo, TableInfo, TransformInfo, TriggerInfo, TsConfigInfo,
+    TsDictInfo, TsParserInfo, TsTemplateInfo, TypeCommentInfo, UserMappingInfo, ViewInfo,
 };
 use super::DumpOptions;
 
@@ -71,7 +72,10 @@ pub fn write_create_table(out: &mut String, table: &TableInfo) {
         if col.not_null {
             out.push_str(" NOT NULL");
         }
-        if let Some(ref default) = col.default_expr {
+        if let Some(ref expr) = col.generated_expr {
+            // GENERATED ALWAYS AS (expr) STORED
+            out.push_str(&format!(" GENERATED ALWAYS AS ({expr}) STORED"));
+        } else if let Some(ref default) = col.default_expr {
             out.push_str(&format!(" DEFAULT {default}"));
         }
         // Add trailing comma if not the last item (columns or inline CHECK constraints follow).
@@ -1408,6 +1412,256 @@ pub fn write_drop_language(out: &mut String, lang: &LanguageInfo, if_exists: boo
 }
 
 // ── End Issue-53 format functions ──────────────────────────────────────────
+
+// ── Issue-54 format functions ──────────────────────────────────────────────
+
+/// Write a `CREATE TYPE ... AS ENUM` statement and `ALTER TYPE ... OWNER TO`.
+pub fn write_create_enum_type(out: &mut String, t: &EnumTypeInfo) {
+    let qname = t.qualified_name();
+    out.push_str(&format!("--\n-- Name: {}; Type: TYPE\n--\n\n", t.name));
+    out.push_str(&format!("CREATE TYPE {qname} AS ENUM (\n"));
+    for (i, label) in t.labels.iter().enumerate() {
+        let escaped = label.replace('\'', "''");
+        if i + 1 < t.labels.len() {
+            out.push_str(&format!("    '{escaped}',\n"));
+        } else {
+            out.push_str(&format!("    '{escaped}'\n"));
+        }
+    }
+    out.push_str(");\n");
+}
+
+/// Write `ALTER TYPE ... OWNER TO ...`.
+pub fn write_alter_enum_type_owner(out: &mut String, t: &EnumTypeInfo) {
+    let qname = t.qualified_name();
+    out.push_str(&format!(
+        "ALTER TYPE {qname} OWNER TO {};\n",
+        quote_ident(&t.owner)
+    ));
+}
+
+/// Write a `CREATE TYPE ... AS RANGE` statement and `ALTER TYPE ... OWNER TO`.
+pub fn write_create_range_type(out: &mut String, t: &RangeTypeInfo) {
+    let qname = t.qualified_name();
+    out.push_str(&format!("--\n-- Name: {}; Type: TYPE\n--\n\n", t.name));
+    out.push_str(&format!("CREATE TYPE {qname} AS RANGE (\n"));
+
+    // subtype — always emit
+    let subtype_q = if t.subtype_schema == "pg_catalog" || t.subtype_schema.is_empty() {
+        t.subtype.clone()
+    } else {
+        format!(
+            "{}.{}",
+            quote_ident(&t.subtype_schema),
+            quote_ident(&t.subtype)
+        )
+    };
+    out.push_str(&format!("    subtype = {subtype_q}"));
+
+    // multirange type
+    if !t.multirange_name.is_empty() {
+        out.push_str(&format!(
+            ",\n    multirange_type_name = {}",
+            t.multirange_name
+        ));
+    }
+
+    // collation (only if set and not the default)
+    if !t.collation.is_empty() {
+        let col_q = if t.collation_schema == "pg_catalog" || t.collation_schema.is_empty() {
+            quote_ident(&t.collation)
+        } else {
+            format!(
+                "{}.{}",
+                quote_ident(&t.collation_schema),
+                quote_ident(&t.collation)
+            )
+        };
+        out.push_str(&format!(",\n    collation = {col_q}"));
+    }
+
+    // canonical function
+    if !t.canonical_func.is_empty() {
+        out.push_str(&format!(",\n    canonical = {}", t.canonical_func));
+    }
+
+    // subtype_diff function
+    if !t.subtype_diff_func.is_empty() {
+        out.push_str(&format!(",\n    subtype_diff = {}", t.subtype_diff_func));
+    }
+
+    out.push_str("\n);\n");
+}
+
+/// Write `ALTER TYPE ... OWNER TO ...`.
+pub fn write_alter_range_type_owner(out: &mut String, t: &RangeTypeInfo) {
+    let qname = t.qualified_name();
+    out.push_str(&format!(
+        "ALTER TYPE {qname} OWNER TO {};\n",
+        quote_ident(&t.owner)
+    ));
+}
+
+/// Write a `CREATE TYPE ... AS (...)` composite type statement and `ALTER TYPE ... OWNER TO`.
+pub fn write_create_composite_type(out: &mut String, t: &CompositeTypeInfo) {
+    let qname = t.qualified_name();
+    out.push_str(&format!("--\n-- Name: {}; Type: TYPE\n--\n\n", t.name));
+    out.push_str(&format!("CREATE TYPE {qname} AS (\n"));
+    for (i, field) in t.fields.iter().enumerate() {
+        out.push_str(&format!(
+            "\t{} {}",
+            quote_ident(&field.name),
+            field.type_name
+        ));
+        if !field.collation.is_empty() {
+            out.push_str(&format!(" COLLATE {}", quote_ident(&field.collation)));
+        }
+        if i + 1 < t.fields.len() {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+    out.push_str(");\n");
+}
+
+/// Write `ALTER TYPE ... OWNER TO ...`.
+pub fn write_alter_composite_type_owner(out: &mut String, t: &CompositeTypeInfo) {
+    let qname = t.qualified_name();
+    out.push_str(&format!(
+        "ALTER TYPE {qname} OWNER TO {};\n",
+        quote_ident(&t.owner)
+    ));
+}
+
+/// Write a `CREATE DOMAIN` statement and `ALTER DOMAIN ... OWNER TO`.
+pub fn write_create_domain(out: &mut String, d: &DomainInfo) {
+    let qname = d.qualified_name();
+    out.push_str(&format!("--\n-- Name: {}; Type: DOMAIN\n--\n\n", d.name));
+    out.push_str(&format!("CREATE DOMAIN {qname} AS {}", d.base_type));
+    if d.not_null {
+        out.push_str(" NOT NULL");
+    }
+    if !d.default_expr.is_empty() {
+        out.push_str(&format!(" DEFAULT {}", d.default_expr));
+    }
+    for (con_name, con_def) in &d.constraints {
+        out.push_str(&format!(
+            "\n\tCONSTRAINT {} {}",
+            quote_ident(con_name),
+            con_def
+        ));
+    }
+    out.push_str(";\n");
+}
+
+/// Write `ALTER DOMAIN ... OWNER TO ...`.
+pub fn write_alter_domain_owner(out: &mut String, d: &DomainInfo) {
+    let qname = d.qualified_name();
+    out.push_str(&format!(
+        "ALTER DOMAIN {qname} OWNER TO {};\n",
+        quote_ident(&d.owner)
+    ));
+}
+
+/// Write a `CREATE OPERATOR FAMILY` statement.
+pub fn write_create_operator_family(out: &mut String, f: &OperatorFamilyInfo) {
+    let qname = f.qualified_name();
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: OPERATOR FAMILY\n--\n\n",
+        f.name
+    ));
+    out.push_str(&format!(
+        "CREATE OPERATOR FAMILY {qname} USING {};\n",
+        quote_ident(&f.am_name)
+    ));
+}
+
+/// Write `ALTER OPERATOR FAMILY ... OWNER TO ...`.
+pub fn write_alter_operator_family_owner(out: &mut String, f: &OperatorFamilyInfo) {
+    let qname = f.qualified_name();
+    out.push_str(&format!(
+        "ALTER OPERATOR FAMILY {qname} USING {} OWNER TO {};\n",
+        quote_ident(&f.am_name),
+        quote_ident(&f.owner)
+    ));
+}
+
+/// Write a `CREATE OPERATOR CLASS` statement.
+pub fn write_create_operator_class(out: &mut String, c: &OperatorClassInfo) {
+    let qname = c.qualified_name();
+    let family_q = format!(
+        "{}.{}",
+        quote_ident(&c.family_schema),
+        quote_ident(&c.family_name)
+    );
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: OPERATOR CLASS\n--\n\n",
+        c.name
+    ));
+    let default_kw = if c.is_default { "DEFAULT " } else { "" };
+    out.push_str(&format!(
+        "CREATE OPERATOR CLASS {qname}\n    {default_kw}FOR TYPE {} USING {} FAMILY {family_q} AS\n    STORAGE {};\n",
+        c.type_name,
+        quote_ident(&c.am_name),
+        c.type_name,
+    ));
+}
+
+/// Write `ALTER OPERATOR CLASS ... OWNER TO ...`.
+pub fn write_alter_operator_class_owner(out: &mut String, c: &OperatorClassInfo) {
+    let qname = c.qualified_name();
+    out.push_str(&format!(
+        "ALTER OPERATOR CLASS {qname} USING {} OWNER TO {};\n",
+        quote_ident(&c.am_name),
+        quote_ident(&c.owner)
+    ));
+}
+
+/// Write `ALTER TABLE ... ALTER COLUMN ... ADD GENERATED ... AS IDENTITY (...)`.
+pub fn write_alter_table_add_identity(out: &mut String, iseq: &IdentitySequenceInfo) {
+    let table_q = format!(
+        "{}.{}",
+        quote_ident(&iseq.table_schema),
+        quote_ident(&iseq.table_name)
+    );
+    let identity_kw = if iseq.identity == 'a' {
+        "ALWAYS"
+    } else {
+        "BY DEFAULT"
+    };
+    out.push_str(&format!(
+        "ALTER TABLE {table_q} ALTER COLUMN {} ADD GENERATED {identity_kw} AS IDENTITY (\n",
+        quote_ident(&iseq.column_name)
+    ));
+    out.push_str(&format!("    SEQUENCE NAME {}\n", iseq.seq_name));
+    out.push_str(&format!("    START WITH {}\n", iseq.start_value));
+    out.push_str(&format!("    INCREMENT BY {}\n", iseq.increment_by));
+    // Determine NO MINVALUE / NO MAXVALUE based on typical defaults.
+    // min_value = 1 => NO MINVALUE for ascending;
+    // max_value = i64::MAX or very large => NO MAXVALUE.
+    let no_min = iseq.min_value.map(|m| m == 1).unwrap_or(true);
+    let no_max = iseq
+        .max_value
+        .map(|m| m == i64::MAX || m >= 2_147_483_647)
+        .unwrap_or(true);
+    if no_min {
+        out.push_str("    NO MINVALUE\n");
+    } else {
+        out.push_str(&format!("    MINVALUE {}\n", iseq.min_value.unwrap()));
+    }
+    if no_max {
+        out.push_str("    NO MAXVALUE\n");
+    } else {
+        out.push_str(&format!("    MAXVALUE {}\n", iseq.max_value.unwrap()));
+    }
+    out.push_str(&format!("    CACHE {}\n", iseq.cache_size));
+    if iseq.cycle {
+        out.push_str("    CYCLE\n");
+    }
+    out.push_str(");\n");
+}
+
+// ── End Issue-54 format functions ──────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
