@@ -180,6 +180,66 @@ fn restore_requires_filename() {
 }
 
 #[test]
+/// pg_restore --clean --if-exists: succeeds even when objects don't exist.
+/// pg_restore --if-exists without --clean: fails with validation error.
+fn restore_if_exists_integration() {
+    crate::common::setup_restore_test_schema();
+
+    // Dump the test table.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let dump_path = dir.path().join("dump_if_exists.sql");
+    let dump_path_str = dump_path.to_string_lossy().to_string();
+
+    let (_stdout, stderr, code) = crate::common::run_pg_dump(&[
+        "-t",
+        "dump_test_restore",
+        "-d",
+        "postgres",
+        "-f",
+        &dump_path_str,
+    ]);
+    assert_eq!(code, 0, "pg_dump failed: {stderr}");
+
+    // Create target database.
+    let target_db = "pg_plumbing_if_exists_test";
+    crate::common::create_test_db(target_db);
+
+    // ── Case 1: --clean --if-exists on an empty database ─────────────────
+    // The DROP statements will fire but the objects won't exist.
+    // With --if-exists, this must succeed (no error).
+    let (_stdout, stderr, code) =
+        crate::common::run_pg_restore(&["-d", target_db, "--clean", "--if-exists", &dump_path_str]);
+    assert_eq!(
+        code, 0,
+        "pg_restore --clean --if-exists should succeed even when objects don't exist: {stderr}"
+    );
+
+    // Verify data was restored correctly.
+    let count =
+        crate::common::psql_query(target_db, "select count(*) from public.dump_test_restore;");
+    assert_eq!(
+        count.trim(),
+        "3",
+        "should have 3 rows after --clean --if-exists restore"
+    );
+
+    // ── Case 2: --if-exists without --clean should fail with a clear error ─
+    let (_stdout, stderr, code) =
+        crate::common::run_pg_restore(&["-d", target_db, "--if-exists", &dump_path_str]);
+    assert_ne!(
+        code, 0,
+        "--if-exists without --clean must fail with an error"
+    );
+    assert!(
+        stderr.contains("--if-exists requires") || stderr.contains("--clean"),
+        "error should mention --if-exists requires --clean: {stderr}"
+    );
+
+    // Clean up.
+    crate::common::drop_test_db(target_db);
+}
+
+#[test]
 /// Restore a dump with INSERT statements (not COPY).
 fn restore_inserts_mode_round_trip() {
     crate::common::setup_restore_test_schema();

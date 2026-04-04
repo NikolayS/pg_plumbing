@@ -86,6 +86,18 @@ pub struct PgDumpArgs {
     #[arg(short = 'j', long = "jobs")]
     jobs: Option<usize>,
 
+    /// Drop database objects before recreating them.
+    #[arg(short = 'c', long = "clean")]
+    clean: bool,
+
+    /// Use DROP ... IF EXISTS (requires --clean).
+    #[arg(long = "if-exists")]
+    if_exists: bool,
+
+    /// Include CREATE DATABASE + \connect in the output.
+    #[arg(short = 'C', long = "create")]
+    create_db: bool,
+
     /// Positional database name (alternative to -d).
     #[arg()]
     database: Option<String>,
@@ -119,6 +131,10 @@ pub struct PgRestoreArgs {
     #[arg(short = 'c', long = "clean")]
     clean: bool,
 
+    /// Use DROP ... IF EXISTS (requires --clean).
+    #[arg(long = "if-exists")]
+    if_exists: bool,
+
     /// Number of parallel jobs.
     #[arg(short = 'j', long = "jobs")]
     jobs: Option<usize>,
@@ -137,6 +153,11 @@ async fn main() -> Result<()> {
 }
 
 async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
+    // --if-exists requires --clean
+    if args.if_exists && !args.clean {
+        bail!("pg_dump: error: option --if-exists requires option -c/--clean");
+    }
+
     let dbname = args
         .dbname
         .as_deref()
@@ -157,6 +178,9 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
         no_owner: args.no_owner,
         no_privileges: args.no_privileges,
         jobs: args.jobs.unwrap_or(1).max(1),
+        clean: args.clean,
+        if_exists: args.if_exists,
+        create_db: args.create_db,
     };
 
     match args.format {
@@ -190,6 +214,11 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
 }
 
 async fn run_pg_restore(args: PgRestoreArgs) -> Result<()> {
+    // --if-exists requires --clean
+    if args.if_exists && !args.clean {
+        bail!("pg_restore: error: option --if-exists requires option -c/--clean");
+    }
+
     let dbname = match args.dbname {
         Some(ref d) => d.clone(),
         None => bail!("pg_restore: no database specified (use -d)"),
@@ -203,6 +232,7 @@ async fn run_pg_restore(args: PgRestoreArgs) -> Result<()> {
     let opts = restore::RestoreOptions {
         dbname,
         clean: args.clean,
+        if_exists: args.if_exists,
         jobs: args.jobs.unwrap_or(1).max(1),
     };
 
