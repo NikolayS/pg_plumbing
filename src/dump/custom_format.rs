@@ -272,11 +272,22 @@ pub fn write_data_block(w: &mut impl Write, dump_id: i32, data: &[u8]) -> io::Re
     // Compress the data.
     let compressed = compress_zlib(data)?;
 
+    // Guard against silent i32 overflow for tables with >2GB of compressed data.
+    let compressed_len = i32::try_from(compressed.len()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "compressed data length {} exceeds i32::MAX; cannot write data block",
+                compressed.len()
+            ),
+        )
+    })?;
+
     // Block header: type + dump_id.
     w.write_all(&[BLK_DATA])?;
     write_int(w, dump_id)?;
     // Compressed data size.
-    write_int(w, compressed.len() as i32)?;
+    write_int(w, compressed_len)?;
     // Compressed data.
     w.write_all(&compressed)?;
 
@@ -497,12 +508,30 @@ pub fn read_next_data_block(r: &mut impl std::io::Read) -> io::Result<Option<(i3
             let mut decompressed = Vec::new();
             decoder.read_to_end(&mut decompressed)?;
 
-            // Skip the end-of-data marker (BLK_DATA + dump_id + size=0).
+            // Validate the end-of-data marker (BLK_DATA + dump_id + size=0).
+            // A corrupt or truncated archive must produce a clear error.
             let mut marker_type = [0u8; 1];
             r.read_exact(&mut marker_type)?;
-            if marker_type[0] == BLK_DATA {
-                let _id = read_int(r)?;
-                let _sz = read_int(r)?;
+            if marker_type[0] != BLK_DATA {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid end-of-data marker byte: expected BLK_DATA ({}), got {}",
+                        BLK_DATA, marker_type[0]
+                    ),
+                ));
+            }
+            let _marker_id = read_int(r)?;
+            let marker_size = read_int(r)?;
+            if marker_size != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "corrupt archive: end-of-data marker has non-zero size {} (expected 0); \
+                         archive may be truncated",
+                        marker_size
+                    ),
+                ));
             }
 
             Ok(Some((dump_id, decompressed)))
