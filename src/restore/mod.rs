@@ -11,6 +11,8 @@ use bytes::Bytes;
 use futures_util::SinkExt;
 use tokio_postgres::NoTls;
 
+use crate::dump::custom_format;
+
 /// Options controlling how to restore.
 #[derive(Debug, Clone)]
 pub struct RestoreOptions {
@@ -34,6 +36,7 @@ enum SqlSegment {
     },
 }
 
+<<<<<<< HEAD
 /// Restore a directory-format dump to a database.
 ///
 /// Reads `toc.dat` from `input_dir`, executes schema DDL files listed
@@ -75,6 +78,50 @@ pub async fn restore_directory(input_dir: &str, opts: &RestoreOptions) -> Result
     }
 
     // Connect to the database.
+=======
+/// Detect whether the given bytes start with a PGDMP custom archive header.
+pub fn is_custom_format(data: &[u8]) -> bool {
+    data.starts_with(custom_format::MAGIC)
+}
+
+/// Restore a PostgreSQL custom archive to a database.
+///
+/// Reads the PGDMP header + TOC, then replays schema DDL and COPY data blocks.
+pub async fn restore_custom(data: &[u8], opts: &RestoreOptions) -> Result<()> {
+    use custom_format::{read_header, read_next_data_block, read_toc_entry};
+    use std::collections::HashMap;
+    use std::io::Cursor;
+
+    let mut cursor = Cursor::new(data);
+
+    // ── Parse header ───────────────────────────────────────────────────────
+    let (_format, toc_count) = read_header(&mut cursor)
+        .map_err(|e| anyhow::anyhow!("failed to read custom archive header: {e}"))?;
+
+    // ── Parse TOC ──────────────────────────────────────────────────────────
+    let mut toc_entries = Vec::with_capacity(toc_count);
+    for _ in 0..toc_count {
+        let entry = read_toc_entry(&mut cursor)
+            .map_err(|e| anyhow::anyhow!("failed to read TOC entry: {e}"))?;
+        toc_entries.push(entry);
+    }
+
+    // Build map: dump_id → copy_stmt for data entries.
+    let copy_stmts: HashMap<i32, String> = toc_entries
+        .iter()
+        .filter(|e| e.had_dumper != 0 && !e.copy_stmt.is_empty())
+        .map(|e| (e.dump_id, e.copy_stmt.clone()))
+        .collect();
+
+    // Collect DDL (defn) for schema entries, in order.
+    let schema_ddls: Vec<String> = toc_entries
+        .iter()
+        .filter(|e| e.had_dumper == 0 && !e.defn.is_empty())
+        .map(|e| e.defn.clone())
+        .collect();
+
+    // ── Connect ────────────────────────────────────────────────────────────
+>>>>>>> origin/main
     let conninfo = crate::build_conninfo(&opts.dbname);
     let (client, connection) = tokio_postgres::connect(&conninfo, NoTls)
         .await
@@ -86,6 +133,7 @@ pub async fn restore_directory(input_dir: &str, opts: &RestoreOptions) -> Result
         }
     });
 
+<<<<<<< HEAD
     // Execute schema DDL files.
     for ddl_file in &schema_files {
         let ddl_path = dir_path.join(ddl_file);
@@ -133,6 +181,62 @@ pub async fn restore_directory(input_dir: &str, opts: &RestoreOptions) -> Result
                         .await
                         .context("failed to finish COPY")?;
                 }
+=======
+    // ── Apply schema DDL ───────────────────────────────────────────────────
+    if opts.clean {
+        // Generate and execute DROP statements from schema DDL.
+        for ddl in &schema_ddls {
+            let drops = generate_drop_statements(ddl);
+            if !drops.trim().is_empty() {
+                let _ = client.batch_execute(&drops).await; // ignore errors (table may not exist)
+            }
+        }
+    }
+
+    for ddl in &schema_ddls {
+        let trimmed = ddl.trim();
+        if !trimmed.is_empty() {
+            client.batch_execute(trimmed).await.with_context(|| {
+                let preview: String = trimmed.chars().take(120).collect();
+                format!("failed to execute DDL: {preview}")
+            })?;
+        }
+    }
+
+    // ── Read and apply data blocks ─────────────────────────────────────────
+    // Data blocks start immediately after the TOC. We continue reading from
+    // the cursor position (which is already past the TOC).
+    loop {
+        match read_next_data_block(&mut cursor)
+            .map_err(|e| anyhow::anyhow!("failed to read data block: {e}"))?
+        {
+            None => break, // BLK_EOF
+            Some((_dump_id, data)) if data.is_empty() => {
+                // End-of-data marker or empty block — skip.
+                continue;
+            }
+            Some((dump_id, data)) => {
+                let copy_stmt = match copy_stmts.get(&dump_id) {
+                    Some(s) => s.clone(),
+                    None => {
+                        // Unknown dump_id — skip.
+                        continue;
+                    }
+                };
+
+                let copy_data = String::from_utf8_lossy(&data).to_string();
+
+                let sink = client
+                    .copy_in(copy_stmt.as_str())
+                    .await
+                    .with_context(|| format!("failed to start COPY: {copy_stmt}"))?;
+                let mut sink = Box::pin(sink);
+                let data_bytes = Bytes::from(copy_data.into_bytes());
+                sink.send(data_bytes)
+                    .await
+                    .context("failed to send COPY data")?;
+                sink.close().await.context("failed to finish COPY")?;
+>>>>>>> origin/main
             }
         }
     }

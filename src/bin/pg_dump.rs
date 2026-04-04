@@ -4,6 +4,7 @@
 //! pg_dump — dump a PostgreSQL database.
 
 use clap::Parser;
+use pg_plumbing::dump;
 
 /// pg_dump dumps a database as a text file or to other formats.
 ///
@@ -229,9 +230,72 @@ fn main() {
         }
     }
 
-    // Actual dump not yet implemented.
-    eprintln!("pg_dump: not yet implemented");
-    std::process::exit(1);
+    // Resolve dbname.
+    let dbname = if !cli.dbname.is_empty() {
+        cli.dbname[0].clone()
+    } else {
+        cli.dbname_flag
+            .clone()
+            .or_else(|| std::env::var("PGDATABASE").ok())
+            .unwrap_or_else(|| "postgres".to_string())
+    };
+
+    let opts = dump::DumpOptions {
+        dbname,
+        tables: Vec::new(), // TODO: -t flag not yet plumbed in pg_dump binary
+        schema_only: cli.schema_only,
+        data_only: cli.data_only,
+        inserts: cli.inserts || cli.column_inserts || cli.rows_per_insert.is_some(),
+        column_inserts: cli.column_inserts,
+        rows_per_insert: cli.rows_per_insert.map(|v| v as u32),
+        schemas: Vec::new(),
+        exclude_schemas: Vec::new(),
+        exclude_tables: Vec::new(),
+        no_owner: false,
+        no_privileges: false,
+    };
+
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+    match format_str {
+        "custom" | "c" => {
+            let bytes = rt.block_on(dump::dump_custom(&opts)).unwrap_or_else(|e| {
+                eprintln!("pg_dump: {e}");
+                std::process::exit(1);
+            });
+            match cli.file {
+                Some(ref path) => {
+                    std::fs::write(path, &bytes).unwrap_or_else(|e| {
+                        eprintln!("pg_dump: could not write to file \"{path}\": {e}");
+                        std::process::exit(1);
+                    });
+                }
+                None => {
+                    use std::io::Write;
+                    std::io::stdout().write_all(&bytes).unwrap_or_else(|e| {
+                        eprintln!("pg_dump: write error: {e}");
+                        std::process::exit(1);
+                    });
+                }
+            }
+        }
+        _ => {
+            // Plain format (and unimplemented formats fall back to plain).
+            let output = rt.block_on(dump::dump_plain(&opts)).unwrap_or_else(|e| {
+                eprintln!("pg_dump: {e}");
+                std::process::exit(1);
+            });
+            match cli.file {
+                Some(ref path) => {
+                    std::fs::write(path, &output).unwrap_or_else(|e| {
+                        eprintln!("pg_dump: could not write to file \"{path}\": {e}");
+                        std::process::exit(1);
+                    });
+                }
+                None => print!("{output}"),
+            }
+        }
+    }
 }
 
 fn validate_compress(compress_str: &str, format_str: &str) {

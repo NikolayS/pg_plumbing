@@ -1168,10 +1168,56 @@ fn run_defaults() {
 }
 
 #[test]
-#[ignore]
 /// defaults_custom_format: pg_dump --format=custom → pg_restore round-trip.
 /// Verifies gzip compression (when available).
-fn run_defaults_custom_format() {}
+fn run_defaults_custom_format() {
+    // 1. Setup test schema.
+    crate::common::setup_test_schema();
+
+    // 2. pg_dump -F custom -d postgres -t dump_test_simple -f /tmp/test_custom.dump
+    let (_, stderr, code) = crate::common::run_pg_dump(&[
+        "-F",
+        "custom",
+        "-t",
+        "dump_test_simple",
+        "-d",
+        "postgres",
+        "-f",
+        "/tmp/test_custom.dump",
+    ]);
+    assert_eq!(
+        code, 0,
+        "pg_dump -F custom should succeed, stderr: {stderr}"
+    );
+
+    // 3. Verify file starts with PGDMP magic.
+    let bytes = std::fs::read("/tmp/test_custom.dump").expect("dump file should exist");
+    assert!(
+        bytes.starts_with(b"PGDMP"),
+        "custom dump should start with PGDMP magic"
+    );
+
+    // 4. Create fresh DB, pg_restore round-trip.
+    let test_db = "pg_plumbing_custom_test";
+    crate::common::create_test_db(test_db);
+
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_pg_restore"))
+        .args(["-d", test_db, "/tmp/test_custom.dump"])
+        .env("PGPASSWORD", "postgres")
+        .status()
+        .expect("pg_restore should run");
+    assert!(status.success(), "pg_restore of custom dump should succeed");
+
+    // 5. Verify data was restored.
+    let count = crate::common::psql_query(test_db, "SELECT COUNT(*) FROM dump_test_simple");
+    assert!(
+        count.trim() == "3",
+        "should have 3 rows after restore, got: {count}"
+    );
+
+    crate::common::drop_test_db(test_db);
+    std::fs::remove_file("/tmp/test_custom.dump").ok();
+}
 
 #[test]
 /// defaults_dir_format: pg_dump --format=directory → pg_restore round-trip.
