@@ -253,6 +253,12 @@ fn main() {
         exclude_tables: Vec::new(),
         no_owner: false,
         no_privileges: false,
+        jobs: cli
+            .jobs
+            .as_deref()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(1)
+            .max(1),
     };
 
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -278,6 +284,17 @@ fn main() {
                     });
                 }
             }
+        }
+        "directory" | "d" => {
+            let output_dir = cli.file.as_deref().unwrap_or_else(|| {
+                eprintln!("pg_dump: directory format requires -f/--file");
+                std::process::exit(1);
+            });
+            rt.block_on(dump::directory_format::dump_directory(&opts, output_dir))
+                .unwrap_or_else(|e| {
+                    eprintln!("pg_dump: {e}");
+                    std::process::exit(1);
+                });
         }
         _ => {
             // Plain format (and unimplemented formats fall back to plain).

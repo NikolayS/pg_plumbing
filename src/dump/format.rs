@@ -10,10 +10,31 @@ use super::catalog::{quote_ident, TableInfo};
 use super::DumpOptions;
 
 /// Write a `CREATE TABLE` statement to the output buffer.
+///
+/// Handles three cases:
+/// - Regular table: standard column-list CREATE TABLE.
+/// - Partitioned table: CREATE TABLE ... PARTITION BY <key>.
+/// - Partition child: CREATE TABLE <child> PARTITION OF <parent> <bound>.
 pub fn write_create_table(out: &mut String, table: &TableInfo) {
     let qname = table.qualified_name();
 
     out.push_str(&format!("--\n-- Name: {}; Type: TABLE\n--\n\n", table.name));
+
+    // Partition child: `CREATE TABLE child PARTITION OF parent <bound>;`
+    if let (Some(ref bound), Some(ref parent)) = (&table.partition_bound, &table.parent_table) {
+        // Use the parent's own schema (may differ from the child's schema).
+        let parent_schema = table
+            .parent_schema
+            .as_deref()
+            .unwrap_or(table.schema.as_str());
+        let parent_qname = format!("{}.{}", quote_ident(parent_schema), quote_ident(parent));
+        out.push_str(&format!(
+            "CREATE TABLE {qname} PARTITION OF {parent_qname} {bound};\n"
+        ));
+        return;
+    }
+
+    // Partitioned parent or regular table — write column list.
     out.push_str(&format!("CREATE TABLE {qname} (\n"));
 
     for (i, col) in table.columns.iter().enumerate() {
@@ -38,7 +59,14 @@ pub fn write_create_table(out: &mut String, table: &TableInfo) {
         ));
     }
 
-    out.push_str(");\n");
+    out.push(')');
+
+    // Append PARTITION BY clause for partitioned tables.
+    if let Some(ref partkey) = table.partition_key {
+        out.push_str(&format!("\nPARTITION BY {partkey}"));
+    }
+
+    out.push_str(";\n");
 }
 
 /// Write table data as a raw COPY data string (rows only, no header/footer).
@@ -50,8 +78,14 @@ pub async fn write_table_data_to_string(
     opts: &DumpOptions,
 ) -> Result<String> {
     let qname = table.qualified_name();
-    let col_names: Vec<String> = table.columns.iter().map(|c| quote_ident(&c.name)).collect();
-    let col_list = col_names.join(", ");
+    // Cast each column to text to handle custom types (enums, domains, etc.)
+    // that tokio-postgres cannot decode by OID at runtime.
+    let col_list: String = table
+        .columns
+        .iter()
+        .map(|c| format!("{}::text", quote_ident(&c.name)))
+        .collect::<Vec<_>>()
+        .join(", ");
 
     let query = format!("select {col_list} from {qname}");
     let rows = client
@@ -89,9 +123,14 @@ pub async fn write_table_data(
 ) -> Result<()> {
     let qname = table.qualified_name();
     let col_names: Vec<String> = table.columns.iter().map(|c| quote_ident(&c.name)).collect();
-    let col_list = col_names.join(", ");
+    // Cast each column to text to handle custom types (enums, domains, etc.)
+    let col_list_cast: String = col_names
+        .iter()
+        .map(|c| format!("{c}::text"))
+        .collect::<Vec<_>>()
+        .join(", ");
 
-    let query = format!("select {col_list} from {qname}");
+    let query = format!("select {col_list_cast} from {qname}");
     let rows = client
         .query(&query, &[])
         .await
@@ -112,7 +151,19 @@ pub async fn write_table_data(
 
 /// Write data as COPY ... FROM stdin.
 fn write_copy(out: &mut String, table: &TableInfo, rows: &[tokio_postgres::Row]) -> Result<()> {
-    let qname = table.qualified_name();
+    // For partition children, COPY into the parent table so that the
+    // partitioning logic routes each row to the correct child during restore.
+    // This is required for non-integer partition keys (e.g. enums) whose hash
+    // depends on catalog OIDs that differ across databases.
+    let copy_target_qname = if let (Some(ref parent), Some(ref parent_schema)) =
+        (&table.parent_table, &table.parent_schema)
+    {
+        format!("{}.{}", quote_ident(parent_schema), quote_ident(parent))
+    } else if let Some(ref parent) = &table.parent_table {
+        format!("{}.{}", quote_ident(&table.schema), quote_ident(parent))
+    } else {
+        table.qualified_name()
+    };
     let col_names: Vec<String> = table.columns.iter().map(|c| quote_ident(&c.name)).collect();
     let col_list = col_names.join(", ");
 
@@ -120,7 +171,9 @@ fn write_copy(out: &mut String, table: &TableInfo, rows: &[tokio_postgres::Row])
         "--\n-- Data for Name: {}; Type: TABLE DATA\n--\n\n",
         table.name
     ));
-    out.push_str(&format!("COPY {qname} ({col_list}) FROM stdin;\n"));
+    out.push_str(&format!(
+        "COPY {copy_target_qname} ({col_list}) FROM stdin;\n"
+    ));
 
     for row in rows {
         let mut values = Vec::new();
@@ -143,7 +196,17 @@ fn write_inserts(
     rows: &[tokio_postgres::Row],
     opts: &DumpOptions,
 ) -> Result<()> {
-    let qname = table.qualified_name();
+    // For partition children, INSERT into the parent table for the same reason
+    // as write_copy: enum-hashed partitions need re-routing during restore.
+    let insert_target_qname = if let (Some(ref parent), Some(ref parent_schema)) =
+        (&table.parent_table, &table.parent_schema)
+    {
+        format!("{}.{}", quote_ident(parent_schema), quote_ident(parent))
+    } else if let Some(ref parent) = &table.parent_table {
+        format!("{}.{}", quote_ident(&table.schema), quote_ident(parent))
+    } else {
+        table.qualified_name()
+    };
     let col_names: Vec<String> = table.columns.iter().map(|c| quote_ident(&c.name)).collect();
 
     out.push_str(&format!(
@@ -152,9 +215,12 @@ fn write_inserts(
     ));
 
     let prefix = if opts.column_inserts {
-        format!("INSERT INTO {qname} ({}) VALUES", col_names.join(", "))
+        format!(
+            "INSERT INTO {insert_target_qname} ({}) VALUES",
+            col_names.join(", ")
+        )
     } else {
-        format!("INSERT INTO {qname} VALUES")
+        format!("INSERT INTO {insert_target_qname} VALUES")
     };
 
     let rows_per = opts.rows_per_insert.unwrap_or(1) as usize;

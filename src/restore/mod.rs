@@ -9,6 +9,8 @@ pub mod parse;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_util::SinkExt;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tokio_postgres::NoTls;
 
 use crate::dump::custom_format;
@@ -20,6 +22,8 @@ pub struct RestoreOptions {
     pub dbname: String,
     /// Drop objects before recreating them.
     pub clean: bool,
+    /// Number of parallel restore workers (1 = sequential).
+    pub jobs: usize,
 }
 
 /// A parsed segment of a SQL dump file.
@@ -51,10 +55,55 @@ fn safe_join(base: &std::path::Path, filename: &str) -> Result<std::path::PathBu
     Ok(base.join(filename))
 }
 
+/// Restore a single `.dat` file (COPY or INSERT data) into the database.
+async fn restore_data_file(
+    dir_path: &std::path::Path,
+    client: &tokio_postgres::Client,
+    qname: &str,
+    dat_file: &str,
+) -> Result<()> {
+    let dat_path = safe_join(dir_path, dat_file)?;
+    let dat = std::fs::read_to_string(&dat_path)
+        .with_context(|| format!("failed to read data file {dat_file}"))?;
+
+    let segments = parse_sql_segments(&dat);
+    for segment in &segments {
+        match segment {
+            SqlSegment::Statements(stmts) => {
+                let trimmed = stmts.trim();
+                if !trimmed.is_empty() {
+                    client
+                        .batch_execute(trimmed)
+                        .await
+                        .with_context(|| format!("failed to execute SQL from {dat_file}"))?;
+                }
+            }
+            SqlSegment::CopyBlock { header, data } => {
+                let sink = client
+                    .copy_in(header.as_str())
+                    .await
+                    .with_context(|| format!("failed to start COPY for {qname}"))?;
+                let mut sink = Box::pin(sink);
+                let data_bytes = bytes::Bytes::from(data.clone());
+                futures_util::SinkExt::send(&mut sink, data_bytes)
+                    .await
+                    .context("failed to send COPY data")?;
+                futures_util::SinkExt::close(&mut sink)
+                    .await
+                    .context("failed to finish COPY")?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Restore a directory-format dump to a database.
 ///
 /// Reads `toc.dat` from `input_dir`, executes schema DDL files listed
 /// therein, then streams each data `.dat` file via COPY.
+///
+/// When `opts.jobs > 1`, data files are restored in parallel (each
+/// worker opens its own DB connection).
 pub async fn restore_directory(input_dir: &str, opts: &RestoreOptions) -> Result<()> {
     let dir_path = std::path::Path::new(input_dir);
     if !dir_path.is_dir() {
@@ -81,7 +130,7 @@ pub async fn restore_directory(input_dir: &str, opts: &RestoreOptions) -> Result
         let file = parts.next().unwrap_or("").to_string();
 
         match kind {
-            "SEQUENCE" | "TABLE" => {
+            "SCHEMA" | "TYPE" | "SEQUENCE" | "TABLE" => {
                 schema_files.push(file);
             }
             "DATA" => {
@@ -91,7 +140,7 @@ pub async fn restore_directory(input_dir: &str, opts: &RestoreOptions) -> Result
         }
     }
 
-    // Connect to the database.
+    // Connect to the database for DDL (always single-threaded).
     let conninfo = crate::build_conninfo(&opts.dbname);
     let (client, connection) = tokio_postgres::connect(&conninfo, NoTls)
         .await
@@ -103,52 +152,69 @@ pub async fn restore_directory(input_dir: &str, opts: &RestoreOptions) -> Result
         }
     });
 
-    // Execute schema DDL files.
+    // Execute schema DDL files (single-threaded).
+    // Continue on error (matching pg_restore default behavior — log warnings, keep going).
     for ddl_file in &schema_files {
         let ddl_path = safe_join(dir_path, ddl_file)?;
         let ddl = std::fs::read_to_string(&ddl_path)
             .with_context(|| format!("failed to read DDL file {ddl_file}"))?;
         let trimmed = ddl.trim();
         if !trimmed.is_empty() {
-            client
-                .batch_execute(trimmed)
-                .await
-                .with_context(|| format!("failed to execute DDL from {ddl_file}"))?;
+            if let Err(e) = client.batch_execute(trimmed).await {
+                eprintln!("pg_restore: warning: DDL error in {ddl_file}: {e}");
+            }
         }
     }
 
-    // Restore data files via COPY.
-    for (qname, dat_file) in &data_entries {
-        let dat_path = safe_join(dir_path, dat_file)?;
-        let dat = std::fs::read_to_string(&dat_path)
-            .with_context(|| format!("failed to read data file {dat_file}"))?;
+    // Restore data files — sequential or parallel.
+    // Continue on errors (matching pg_restore default behavior — log warnings, keep going).
+    if opts.jobs <= 1 {
+        // Sequential: reuse the existing DDL connection.
+        for (qname, dat_file) in &data_entries {
+            if let Err(e) = restore_data_file(dir_path, &client, qname, dat_file).await {
+                eprintln!("pg_restore: warning: data error for {qname}: {e}");
+            }
+        }
+    } else {
+        // Parallel: spawn N tasks, each with its own DB connection.
+        let jobs = opts.jobs;
+        let semaphore = Arc::new(Semaphore::new(jobs));
+        let dir_path_owned = dir_path.to_path_buf();
+        let conninfo_owned = conninfo.clone();
 
-        // Parse the COPY block from the .dat file.
-        let segments = parse_sql_segments(&dat);
-        for segment in &segments {
-            match segment {
-                SqlSegment::Statements(stmts) => {
-                    let trimmed = stmts.trim();
-                    if !trimmed.is_empty() {
-                        client
-                            .batch_execute(trimmed)
-                            .await
-                            .with_context(|| format!("failed to execute SQL from {dat_file}"))?;
+        let mut handles = Vec::new();
+        for (qname, dat_file) in data_entries {
+            let sem = Arc::clone(&semaphore);
+            let dir_path = dir_path_owned.clone();
+            let conninfo = conninfo_owned.clone();
+
+            let handle = tokio::task::spawn(async move {
+                let _permit = sem.acquire().await.expect("semaphore closed");
+
+                let (worker_client, conn) = tokio_postgres::connect(&conninfo, NoTls)
+                    .await
+                    .with_context(|| format!("parallel restore: failed to connect for {qname}"))?;
+
+                tokio::spawn(async move {
+                    if let Err(e) = conn.await {
+                        eprintln!("parallel restore worker connection error: {e}");
                     }
-                }
-                SqlSegment::CopyBlock { header, data } => {
-                    let sink = client
-                        .copy_in(header.as_str())
-                        .await
-                        .with_context(|| format!("failed to start COPY for {qname}"))?;
-                    let mut sink = Box::pin(sink);
-                    let data_bytes = bytes::Bytes::from(data.clone());
-                    futures_util::SinkExt::send(&mut sink, data_bytes)
-                        .await
-                        .context("failed to send COPY data")?;
-                    futures_util::SinkExt::close(&mut sink)
-                        .await
-                        .context("failed to finish COPY")?;
+                });
+
+                restore_data_file(&dir_path, &worker_client, &qname, &dat_file)
+                    .await
+                    .with_context(|| format!("parallel restore: data error for {qname}"))?;
+                Ok::<(), anyhow::Error>(())
+            });
+
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            match handle.await.context("parallel restore task panicked")? {
+                Ok(()) => {}
+                Err(e) => {
+                    eprintln!("pg_restore: warning: {e}");
                 }
             }
         }

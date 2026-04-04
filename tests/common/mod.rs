@@ -217,3 +217,44 @@ pub fn drop_test_db(dbname: &str) {
     }
     let _ = cmd.output();
 }
+
+/// Set up the parallel-dump test schema (partitioned tables + enum type).
+/// Uses OnceLock to avoid poisoning.
+pub fn setup_parallel_test_schema() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        let conninfo = test_conninfo("postgres");
+        let password = std::env::var("PGPASSWORD").unwrap_or_default();
+        let sql = "\
+            drop table if exists tht cascade;\
+            drop table if exists ths cascade;\
+            drop table if exists tplain cascade;\
+            drop type if exists digit cascade;\
+            create type digit as enum ('0','1','2','3','4','5','6','7','8','9');\
+            create table tplain (en digit, data int unique);\
+            insert into tplain select '0'::digit, generate_series(1,100);\
+            create table ths (mod int, data int) partition by hash(mod);\
+            create table ths_0 partition of ths for values with (modulus 3, remainder 0);\
+            create table ths_1 partition of ths for values with (modulus 3, remainder 1);\
+            create table ths_2 partition of ths for values with (modulus 3, remainder 2);\
+            insert into ths select mod(i,100), i from generate_series(1,300) i;\
+            create table tht (en digit, data int) partition by hash(en);\
+            create table tht_0 partition of tht for values with (modulus 3, remainder 0);\
+            create table tht_1 partition of tht for values with (modulus 3, remainder 1);\
+            create table tht_2 partition of tht for values with (modulus 3, remainder 2);\
+            insert into tht select (mod(i,10)::text)::digit, i from generate_series(1,300) i;\
+        ";
+        let mut cmd = Command::new("psql");
+        cmd.arg(&conninfo).arg("-c").arg(sql);
+        if !password.is_empty() {
+            cmd.env("PGPASSWORD", &password);
+        }
+        let output = cmd.output().expect("psql setup_parallel failed");
+        assert!(
+            output.status.success(),
+            "setup_parallel_test_schema failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    });
+}
