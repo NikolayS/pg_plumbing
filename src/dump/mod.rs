@@ -95,6 +95,21 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     let transforms = catalog::get_transforms(&client)
         .await
         .context("failed to query transforms")?;
+    let fdws = catalog::get_fdws(&client)
+        .await
+        .context("failed to query foreign data wrappers")?;
+    let foreign_servers = catalog::get_foreign_servers(&client)
+        .await
+        .context("failed to query foreign servers")?;
+    let foreign_tables = catalog::get_foreign_tables(&client, opts)
+        .await
+        .context("failed to query foreign tables")?;
+    let user_mappings = catalog::get_user_mappings(&client)
+        .await
+        .context("failed to query user mappings")?;
+    let publications = catalog::get_publications(&client)
+        .await
+        .context("failed to query publications")?;
 
     let mut out = String::new();
 
@@ -176,6 +191,20 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
                 format::write_alter_schema_owner(&mut out, schema);
                 out.push('\n');
             }
+
+            // Emit foreign data wrappers.
+            for fdw in &fdws {
+                format::write_create_fdw(&mut out, fdw);
+                format::write_alter_fdw_owner(&mut out, fdw);
+                out.push('\n');
+            }
+
+            // Emit foreign servers.
+            for srv in &foreign_servers {
+                format::write_create_foreign_server(&mut out, srv);
+                format::write_alter_server_owner(&mut out, srv);
+                out.push('\n');
+            }
         }
 
         for seq in &sequences {
@@ -226,6 +255,20 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
                 format::write_table_data(&mut out, &client, table, opts).await?;
                 out.push('\n');
             }
+        }
+    }
+
+    // Emit foreign tables (schema only, no data).
+    if !opts.data_only && !table_filter_active {
+        for ft in &foreign_tables {
+            if !dumped_schema_names.is_empty() && !dumped_schema_names.contains(ft.schema.as_str())
+            {
+                continue;
+            }
+            format::write_create_foreign_table(&mut out, ft);
+            format::write_alter_foreign_table_owner(&mut out, ft);
+            format::write_alter_foreign_table_column_options(&mut out, ft);
+            out.push('\n');
         }
     }
 
@@ -314,6 +357,20 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
         // Emit transforms.
         for tr in &transforms {
             format::write_create_transform(&mut out, tr);
+            out.push('\n');
+        }
+
+        // Emit user mappings.
+        for um in &user_mappings {
+            format::write_create_user_mapping(&mut out, um);
+            out.push('\n');
+        }
+
+        // Emit publications.
+        for pub_info in &publications {
+            format::write_create_publication(&mut out, pub_info);
+            format::write_alter_publication_owner(&mut out, pub_info);
+            format::write_alter_publication_tables(&mut out, pub_info);
             out.push('\n');
         }
 

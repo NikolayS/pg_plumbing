@@ -751,6 +751,29 @@ pub async fn get_comments(client: &Client, _opts: &DumpOptions) -> Result<Vec<Co
         });
     }
 
+    // Publication comments from pg_description.
+    let pub_rows = client
+        .query(
+            "SELECT p.pubname, d.description
+             FROM pg_catalog.pg_description d
+             JOIN pg_catalog.pg_publication p ON p.oid = d.objoid
+             WHERE d.classoid = 'pg_catalog.pg_publication'::regclass
+             ORDER BY p.pubname",
+            &[],
+        )
+        .await
+        .context("query publication comments")?;
+
+    for row in &pub_rows {
+        let pubname: &str = row.get("pubname");
+        let description: &str = row.get("description");
+        comments.push(CommentInfo {
+            object_type: "PUBLICATION".to_string(),
+            object_name: quote_ident(pubname),
+            comment: description.to_string(),
+        });
+    }
+
     Ok(comments)
 }
 
@@ -863,6 +886,141 @@ pub struct TypeCommentInfo {
     pub type_name: String,
     /// Comment text.
     pub comment: String,
+}
+
+/// Metadata for a foreign data wrapper.
+#[derive(Debug, Clone)]
+pub struct FdwInfo {
+    /// FDW name.
+    pub name: String,
+    /// Owner role name.
+    pub owner: String,
+    /// Handler function name (or empty).
+    pub handler: String,
+    /// Validator function name (or empty).
+    pub validator: String,
+    /// Formatted FDW options (or empty).
+    pub options: String,
+}
+
+/// Metadata for a foreign server.
+#[derive(Debug, Clone)]
+pub struct ForeignServerInfo {
+    /// Server name.
+    pub name: String,
+    /// Owner role name.
+    pub owner: String,
+    /// FDW name.
+    pub fdw_name: String,
+    /// Server type (or empty).
+    pub server_type: String,
+    /// Server version (or empty).
+    pub server_version: String,
+    /// Formatted server options (or empty).
+    pub options: String,
+}
+
+/// Metadata for a foreign table.
+#[derive(Debug, Clone)]
+pub struct ForeignTableInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Table name.
+    pub name: String,
+    /// Owner role name.
+    pub owner: String,
+    /// Foreign server name.
+    pub server_name: String,
+    /// Formatted table-level options (or empty).
+    pub options: String,
+    /// Columns with their types and FDW options.
+    pub columns: Vec<ForeignColumnInfo>,
+}
+
+impl ForeignTableInfo {
+    /// Fully qualified name: `schema.name`.
+    pub fn qualified_name(&self) -> String {
+        format!("{}.{}", quote_ident(&self.schema), quote_ident(&self.name))
+    }
+}
+
+/// Metadata for a foreign table column.
+#[derive(Debug, Clone)]
+pub struct ForeignColumnInfo {
+    /// Column name.
+    pub name: String,
+    /// Full type name.
+    pub type_name: String,
+    /// Whether the column has a NOT NULL constraint.
+    pub not_null: bool,
+    /// Default expression, if any.
+    pub default_expr: Option<String>,
+    /// Raw column-level FDW options (`key=value, ...` from catalog).
+    pub options_raw: String,
+}
+
+/// Metadata for a user mapping.
+#[derive(Debug, Clone)]
+pub struct UserMappingInfo {
+    /// User name (or `PUBLIC`).
+    pub username: String,
+    /// Server name.
+    pub server_name: String,
+    /// Formatted options (or empty).
+    pub options: String,
+}
+
+/// Metadata for a publication.
+#[derive(Debug, Clone)]
+pub struct PublicationInfo {
+    /// Publication name.
+    pub name: String,
+    /// Owner role name.
+    pub owner: String,
+    /// Whether it publishes all tables.
+    pub all_tables: bool,
+    /// Publish INSERT.
+    pub pub_insert: bool,
+    /// Publish UPDATE.
+    pub pub_update: bool,
+    /// Publish DELETE.
+    pub pub_delete: bool,
+    /// Publish TRUNCATE.
+    pub pub_truncate: bool,
+    /// Tables in the publication.
+    pub tables: Vec<PublicationTableInfo>,
+    /// Schemas in the publication.
+    pub schemas: Vec<String>,
+}
+
+/// A table in a publication.
+#[derive(Debug, Clone)]
+pub struct PublicationTableInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Table name.
+    pub name: String,
+    /// WHERE filter expression (or empty).
+    pub where_clause: String,
+}
+
+/// Format PostgreSQL FDW options from catalog representation to SQL.
+///
+/// Options are stored as `key=value` entries separated by `, `.
+/// This formats them as SQL: `key 'value', key2 'value2'`.
+pub fn format_fdw_options(raw: &str) -> String {
+    if raw.is_empty() {
+        return String::new();
+    }
+    raw.split(", ")
+        .filter_map(|kv| {
+            let eq = kv.find('=')?;
+            let key = &kv[..eq];
+            let val = &kv[eq + 1..];
+            Some(format!("{} '{}'", key, val.replace('\'', "''")))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Query user-defined materialized views from the catalog.
@@ -1202,6 +1360,280 @@ pub async fn get_type_comments(
     }
 
     Ok(comments)
+}
+
+/// Query foreign data wrappers from the catalog.
+pub async fn get_fdws(client: &Client) -> Result<Vec<FdwInfo>> {
+    let rows = client
+        .query(
+            "SELECT fdw.fdwname,
+                    r.rolname AS owner,
+                    COALESCE(h.proname, '') AS handler,
+                    COALESCE(v.proname, '') AS validator,
+                    COALESCE(array_to_string(fdw.fdwoptions, ', '), '') AS options
+             FROM pg_catalog.pg_foreign_data_wrapper fdw
+             JOIN pg_catalog.pg_roles r ON r.oid = fdw.fdwowner
+             LEFT JOIN pg_catalog.pg_proc h ON h.oid = fdw.fdwhandler
+             LEFT JOIN pg_catalog.pg_proc v ON v.oid = fdw.fdwvalidator
+             ORDER BY fdw.fdwname",
+            &[],
+        )
+        .await
+        .context("query foreign data wrappers")?;
+
+    let mut fdws = Vec::new();
+    for row in &rows {
+        fdws.push(FdwInfo {
+            name: row.get::<_, &str>("fdwname").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            handler: row.get::<_, &str>("handler").to_string(),
+            validator: row.get::<_, &str>("validator").to_string(),
+            options: row.get::<_, &str>("options").to_string(),
+        });
+    }
+
+    Ok(fdws)
+}
+
+/// Query foreign servers from the catalog.
+pub async fn get_foreign_servers(client: &Client) -> Result<Vec<ForeignServerInfo>> {
+    let rows = client
+        .query(
+            "SELECT s.srvname,
+                    r.rolname AS owner,
+                    fdw.fdwname,
+                    COALESCE(s.srvtype, '') AS srvtype,
+                    COALESCE(s.srvversion, '') AS srvversion,
+                    COALESCE(array_to_string(s.srvoptions, ', '), '') AS options
+             FROM pg_catalog.pg_foreign_server s
+             JOIN pg_catalog.pg_roles r ON r.oid = s.srvowner
+             JOIN pg_catalog.pg_foreign_data_wrapper fdw ON fdw.oid = s.srvfdw
+             ORDER BY s.srvname",
+            &[],
+        )
+        .await
+        .context("query foreign servers")?;
+
+    let mut servers = Vec::new();
+    for row in &rows {
+        servers.push(ForeignServerInfo {
+            name: row.get::<_, &str>("srvname").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            fdw_name: row.get::<_, &str>("fdwname").to_string(),
+            server_type: row.get::<_, &str>("srvtype").to_string(),
+            server_version: row.get::<_, &str>("srvversion").to_string(),
+            options: row.get::<_, &str>("options").to_string(),
+        });
+    }
+
+    Ok(servers)
+}
+
+/// Query foreign tables from the catalog.
+pub async fn get_foreign_tables(
+    client: &Client,
+    opts: &DumpOptions,
+) -> Result<Vec<ForeignTableInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname AS schema_name,
+                    c.relname AS table_name,
+                    r.rolname AS owner,
+                    s.srvname AS server_name,
+                    COALESCE(array_to_string(ft.ftoptions, ', '), '') AS options,
+                    c.oid::bigint AS table_oid
+             FROM pg_catalog.pg_foreign_table ft
+             JOIN pg_catalog.pg_class c ON c.oid = ft.ftrelid
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             JOIN pg_catalog.pg_roles r ON r.oid = c.relowner
+             JOIN pg_catalog.pg_foreign_server s ON s.oid = ft.ftserver
+             WHERE n.nspname != all($1)
+             ORDER BY n.nspname, c.relname",
+            &[&excluded],
+        )
+        .await
+        .context("query foreign tables")?;
+
+    let mut tables = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("schema_name");
+
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+
+        let table_oid = row.get::<_, i64>("table_oid") as u32;
+        let columns = get_foreign_columns(client, table_oid).await?;
+
+        tables.push(ForeignTableInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("table_name").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            server_name: row.get::<_, &str>("server_name").to_string(),
+            options: row.get::<_, &str>("options").to_string(),
+            columns,
+        });
+    }
+
+    Ok(tables)
+}
+
+/// Query columns for a foreign table by OID, including FDW column options.
+async fn get_foreign_columns(client: &Client, table_oid: u32) -> Result<Vec<ForeignColumnInfo>> {
+    let oid_i64 = table_oid as i64;
+    let rows = client
+        .query(
+            "SELECT a.attname,
+                    pg_catalog.format_type(a.atttypid, a.atttypmod) AS type_name,
+                    a.attnotnull,
+                    pg_catalog.pg_get_expr(d.adbin, d.adrelid) AS default_expr,
+                    COALESCE(array_to_string(a.attfdwoptions, ', '), '') AS options
+             FROM pg_catalog.pg_attribute a
+             LEFT JOIN pg_catalog.pg_attrdef d
+               ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+             WHERE a.attrelid = $1::bigint::oid
+               AND a.attnum > 0
+               AND NOT a.attisdropped
+             ORDER BY a.attnum",
+            &[&oid_i64],
+        )
+        .await
+        .context("query foreign columns")?;
+
+    let mut columns = Vec::new();
+    for row in &rows {
+        columns.push(ForeignColumnInfo {
+            name: row.get("attname"),
+            type_name: row.get("type_name"),
+            not_null: row.get("attnotnull"),
+            default_expr: row.get("default_expr"),
+            options_raw: row.get::<_, &str>("options").to_string(),
+        });
+    }
+    Ok(columns)
+}
+
+/// Query user mappings from the catalog.
+pub async fn get_user_mappings(client: &Client) -> Result<Vec<UserMappingInfo>> {
+    let rows = client
+        .query(
+            "SELECT COALESCE(r.rolname, 'PUBLIC') AS username,
+                    s.srvname AS server_name,
+                    COALESCE(array_to_string(um.umoptions, ', '), '') AS options
+             FROM pg_catalog.pg_user_mapping um
+             JOIN pg_catalog.pg_foreign_server s ON s.oid = um.umserver
+             LEFT JOIN pg_catalog.pg_roles r ON r.oid = um.umuser
+             ORDER BY s.srvname, username",
+            &[],
+        )
+        .await
+        .context("query user mappings")?;
+
+    let mut mappings = Vec::new();
+    for row in &rows {
+        mappings.push(UserMappingInfo {
+            username: row.get::<_, &str>("username").to_string(),
+            server_name: row.get::<_, &str>("server_name").to_string(),
+            options: row.get::<_, &str>("options").to_string(),
+        });
+    }
+
+    Ok(mappings)
+}
+
+/// Query publications from the catalog, including their table and schema memberships.
+pub async fn get_publications(client: &Client) -> Result<Vec<PublicationInfo>> {
+    let rows = client
+        .query(
+            "SELECT p.oid::bigint AS pub_oid,
+                    p.pubname,
+                    r.rolname AS owner,
+                    p.puballtables,
+                    p.pubinsert,
+                    p.pubupdate,
+                    p.pubdelete,
+                    p.pubtruncate
+             FROM pg_catalog.pg_publication p
+             JOIN pg_catalog.pg_roles r ON r.oid = p.pubowner
+             ORDER BY p.pubname",
+            &[],
+        )
+        .await
+        .context("query publications")?;
+
+    let mut publications = Vec::new();
+    for row in &rows {
+        let pub_oid: i64 = row.get("pub_oid");
+
+        // Query tables for this publication.
+        let table_rows = client
+            .query(
+                "SELECT n.nspname AS schema_name,
+                        c.relname AS table_name,
+                        COALESCE(pg_catalog.pg_get_expr(pr.prqual, pr.prrelid), '') AS where_clause
+                 FROM pg_catalog.pg_publication_rel pr
+                 JOIN pg_catalog.pg_class c ON c.oid = pr.prrelid
+                 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                 WHERE pr.prpubid = $1::bigint::oid
+                 ORDER BY n.nspname, c.relname",
+                &[&pub_oid],
+            )
+            .await
+            .context("query publication tables")?;
+
+        let mut pub_tables = Vec::new();
+        for tr in &table_rows {
+            pub_tables.push(PublicationTableInfo {
+                schema: tr.get::<_, &str>("schema_name").to_string(),
+                name: tr.get::<_, &str>("table_name").to_string(),
+                where_clause: tr.get::<_, &str>("where_clause").to_string(),
+            });
+        }
+
+        // Query schemas for this publication.
+        let schema_rows = client
+            .query(
+                "SELECT n.nspname AS schema_name
+                 FROM pg_catalog.pg_publication_namespace pn
+                 JOIN pg_catalog.pg_namespace n ON n.oid = pn.pnnspid
+                 WHERE pn.pnpubid = $1::bigint::oid
+                 ORDER BY n.nspname",
+                &[&pub_oid],
+            )
+            .await
+            .context("query publication schemas")?;
+
+        let pub_schemas: Vec<String> = schema_rows
+            .iter()
+            .map(|r| r.get::<_, &str>("schema_name").to_string())
+            .collect();
+
+        publications.push(PublicationInfo {
+            name: row.get::<_, &str>("pubname").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            all_tables: row.get("puballtables"),
+            pub_insert: row.get("pubinsert"),
+            pub_update: row.get("pubupdate"),
+            pub_delete: row.get("pubdelete"),
+            pub_truncate: row.get("pubtruncate"),
+            tables: pub_tables,
+            schemas: pub_schemas,
+        });
+    }
+
+    Ok(publications)
 }
 
 /// Quote an SQL identifier if it needs quoting.

@@ -485,3 +485,81 @@ pub fn setup_issue50_schema() {
         }
     });
 }
+
+/// Set up the issue-51 test schema: FDW, foreign server, foreign table,
+/// user mapping, publications, and publication comments.
+/// Uses OnceLock to avoid poisoning.
+pub fn setup_issue51_schema() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        // We need the dump_test schema with tables for publication tests.
+        setup_dump_test_schema();
+
+        let conninfo = test_conninfo("postgres");
+        let password = std::env::var("PGPASSWORD").unwrap_or_default();
+
+        // Step 1: Create role if not exists + FDW + server
+        let sql1 = "\
+            DO $$ BEGIN \
+              CREATE ROLE regress_dump_test_role LOGIN; \
+            EXCEPTION WHEN duplicate_object THEN NULL; \
+            END $$;\
+            DROP FOREIGN DATA WRAPPER IF EXISTS dummy CASCADE;\
+            CREATE FOREIGN DATA WRAPPER dummy;\
+            CREATE SERVER s1 FOREIGN DATA WRAPPER dummy;\
+        ";
+
+        // Step 2: Foreign table with column options
+        let sql2 = "\
+            DROP FOREIGN TABLE IF EXISTS dump_test.foreign_table;\
+            CREATE FOREIGN TABLE dump_test.foreign_table (\
+                c1 integer\
+            ) SERVER s1;\
+            ALTER FOREIGN TABLE dump_test.foreign_table \
+                ALTER COLUMN c1 OPTIONS (ADD param1 'val1');\
+        ";
+
+        // Step 3: User mapping
+        let sql3 = "\
+            DROP USER MAPPING IF EXISTS FOR regress_dump_test_role SERVER s1;\
+            CREATE USER MAPPING FOR regress_dump_test_role SERVER s1;\
+        ";
+
+        // Step 4: Publications
+        let sql4 = "\
+            DROP PUBLICATION IF EXISTS pub1;\
+            DROP PUBLICATION IF EXISTS pub2;\
+            DROP PUBLICATION IF EXISTS pub3;\
+            DROP PUBLICATION IF EXISTS pub4;\
+            CREATE PUBLICATION pub1;\
+            CREATE PUBLICATION pub2;\
+            CREATE PUBLICATION pub3;\
+            CREATE PUBLICATION pub4;\
+            ALTER PUBLICATION pub1 ADD TABLE dump_test.test_second_table;\
+            ALTER PUBLICATION pub3 ADD TABLES IN SCHEMA dump_test;\
+            ALTER PUBLICATION pub4 ADD TABLE dump_test.test_second_table \
+                WHERE (col1 IS NOT NULL);\
+        ";
+
+        // Step 5: Comments on publication
+        let sql5 = "\
+            COMMENT ON PUBLICATION pub1 IS 'test publication comment';\
+        ";
+
+        for (step, sql) in [sql1, sql2, sql3, sql4, sql5].iter().enumerate() {
+            let mut cmd = Command::new("psql");
+            cmd.arg(&conninfo).arg("-c").arg(sql);
+            if !password.is_empty() {
+                cmd.env("PGPASSWORD", &password);
+            }
+            let output = cmd.output().expect("psql setup_issue51 failed");
+            assert!(
+                output.status.success(),
+                "setup_issue51_schema step {} failed: {}",
+                step + 1,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    });
+}
