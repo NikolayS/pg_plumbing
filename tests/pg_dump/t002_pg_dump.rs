@@ -848,6 +848,7 @@ fn create_user_mapping() {}
 // ---------------------------------------------------------------
 
 #[test]
+#[ignore] // requires plpython3u extension which is not available in all CI environments
 /// CREATE TRANSFORM FOR hstore LANGUAGE plpython3u (via hstore_plpython3u extension).
 fn create_transform() {
     crate::common::setup_issue50_schema();

@@ -359,13 +359,15 @@ pub fn setup_issue50_schema() {
             COMMENT ON TYPE public.test_enum_type IS 'test enum type for pg_plumbing';\
         ";
         // Step 8: transform (via hstore + hstore_plpython3u extension)
+        // This is optional: plpython3u may not be installed in all CI environments.
         let sql8 = "\
             CREATE EXTENSION IF NOT EXISTS hstore;\
             CREATE EXTENSION IF NOT EXISTS plpython3u;\
             CREATE EXTENSION IF NOT EXISTS hstore_plpython3u;\
         ";
 
-        for (step, sql) in [sql1, sql2, sql3, sql4, sql5, sql6, sql7, sql8]
+        // Steps 1-7 are required; step 8 (transform/plpython3u) is best-effort.
+        for (step, sql) in [sql1, sql2, sql3, sql4, sql5, sql6, sql7]
             .iter()
             .enumerate()
         {
@@ -381,6 +383,16 @@ pub fn setup_issue50_schema() {
                 step + 1,
                 String::from_utf8_lossy(&output.stderr)
             );
+        }
+
+        // Step 8: best-effort – skip silently if plpython3u is unavailable.
+        {
+            let mut cmd = Command::new("psql");
+            cmd.arg(&conninfo).arg("-c").arg(sql8);
+            if !password.is_empty() {
+                cmd.env("PGPASSWORD", &password);
+            }
+            let _ = cmd.output(); // ignore errors
         }
     });
 }
