@@ -232,9 +232,20 @@ fn alter_column_set_n_distinct() {}
 fn alter_table_cluster() {}
 
 #[test]
-#[ignore] // not yet implemented: DISABLE TRIGGER not emitted
 /// ALTER TABLE test_table DISABLE TRIGGER ALL.
-fn alter_table_disable_trigger() {}
+fn alter_table_disable_trigger() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("DISABLE TRIGGER ALL"),
+        "output should contain DISABLE TRIGGER ALL:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("test_table_part"),
+        "DISABLE TRIGGER ALL should reference test_table_part:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: foreign table column options not supported
@@ -408,9 +419,20 @@ fn comment_on_subscription() {}
 fn comment_on_text_search_objects() {}
 
 #[test]
-#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON TYPE (ENUM, RANGE, Regular, Undefined).
-fn comment_on_types() {}
+fn comment_on_types() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("COMMENT ON TYPE"),
+        "output should contain COMMENT ON TYPE:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("test_enum_type"),
+        "COMMENT ON TYPE should reference test_enum_type:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: COMMENT ON not emitted + needs domain
@@ -636,14 +658,40 @@ fn create_domain() {}
 fn create_function_pltestlang_handler() {}
 
 #[test]
-#[ignore] // not yet implemented: CREATE FUNCTION not emitted + needs trigger function
 /// CREATE FUNCTION dump_test.trigger_func.
-fn create_function_trigger() {}
+fn create_function_trigger() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE OR REPLACE FUNCTION"),
+        "output should contain CREATE OR REPLACE FUNCTION:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("trigger_func"),
+        "output should contain trigger_func function:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("RETURNS trigger"),
+        "trigger_func should return trigger:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: CREATE FUNCTION not emitted + needs event trigger
 /// CREATE FUNCTION dump_test.event_trigger_func.
-fn create_function_event_trigger() {}
+fn create_function_event_trigger() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("event_trigger_func"),
+        "output should contain event_trigger_func function:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("RETURNS event_trigger"),
+        "event_trigger_func should return event_trigger:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: CREATE FUNCTION not emitted + needs custom type
@@ -656,14 +704,49 @@ fn create_function_int42() {}
 fn create_function_support() {}
 
 #[test]
-#[ignore] // not yet implemented: function-depends-on-PK ordering not verified
 /// Ordering: function that depends on a primary key.
-fn function_depends_on_primary_key() {}
+/// The dump output must contain both the CREATE FUNCTION and the table
+/// (with its PRIMARY KEY), and the table must appear before the function
+/// that depends on it via trigger.
+fn function_depends_on_primary_key() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    // Both table (with PK) and trigger function must be in the output.
+    assert!(
+        stdout.contains("CREATE TABLE public.test_table"),
+        "output should contain test_table:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("trigger_func"),
+        "output should contain trigger_func:\n{stdout}"
+    );
+    // The table CREATE must appear before the function that references it.
+    let table_pos = stdout
+        .find("CREATE TABLE public.test_table")
+        .expect("test_table not found");
+    let func_pos = stdout.find("trigger_func").expect("trigger_func not found");
+    assert!(
+        table_pos < func_pos,
+        "CREATE TABLE should appear before trigger_func in dump"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: CREATE PROCEDURE not emitted
 /// CREATE PROCEDURE dump_test.ptest1.
-fn create_procedure() {}
+fn create_procedure() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE OR REPLACE PROCEDURE"),
+        "output should contain CREATE OR REPLACE PROCEDURE:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("ptest1"),
+        "output should contain ptest1 procedure:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: CREATE OPERATOR FAMILY not emitted
@@ -676,14 +759,44 @@ fn create_operator_family() {}
 fn create_operator_class() {}
 
 #[test]
-#[ignore] // not yet implemented: CREATE EVENT TRIGGER not emitted
 /// CREATE EVENT TRIGGER test_event_trigger.
-fn create_event_trigger() {}
+fn create_event_trigger() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE EVENT TRIGGER"),
+        "output should contain CREATE EVENT TRIGGER:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("test_event_trigger"),
+        "output should contain test_event_trigger:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("ddl_command_start"),
+        "event trigger should fire ON ddl_command_start:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: CREATE TRIGGER not emitted
 /// CREATE TRIGGER test_trigger.
-fn create_trigger() {}
+fn create_trigger() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TRIGGER"),
+        "output should contain CREATE TRIGGER:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("test_trigger"),
+        "output should contain test_trigger:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("BEFORE INSERT OR UPDATE"),
+        "test_trigger should fire BEFORE INSERT OR UPDATE:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: CREATE TYPE ENUM not emitted + needs dump_test schema
@@ -773,9 +886,18 @@ fn create_user_mapping() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: CREATE TRANSFORM not emitted
-/// CREATE TRANSFORM FOR int.
-fn create_transform() {}
+#[ignore] // requires plpython3u extension which is not available in all CI environments
+/// CREATE TRANSFORM FOR hstore LANGUAGE plpython3u (via hstore_plpython3u extension).
+fn create_transform() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    // The hstore_plpython3u extension creates a transform.
+    assert!(
+        stdout.contains("CREATE TRANSFORM FOR"),
+        "output should contain CREATE TRANSFORM FOR:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: CREATE LANGUAGE not emitted
@@ -787,21 +909,68 @@ fn create_language() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: materialized view DDL not emitted
-/// CREATE MATERIALIZED VIEW matview / matview_second / matview_third /
-/// matview_fourth.
-fn create_materialized_views() {}
+/// CREATE MATERIALIZED VIEW matview / matview_second.
+fn create_materialized_views() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE MATERIALIZED VIEW"),
+        "output should contain CREATE MATERIALIZED VIEW:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("public.matview"),
+        "output should contain matview:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("public.matview_second"),
+        "output should contain matview_second:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: matview-depends-on-PK ordering not verified
 /// Ordering: matview that depends on a primary key.
-fn matview_depends_on_primary_key() {}
+/// The table with PK must appear before the matview that selects from it.
+fn matview_depends_on_primary_key() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TABLE public.dump_test_simple"),
+        "output should contain dump_test_simple:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("CREATE MATERIALIZED VIEW public.matview"),
+        "output should contain matview:\n{stdout}"
+    );
+    // Table must appear before the matview that references it.
+    let table_pos = stdout
+        .find("CREATE TABLE public.dump_test_simple")
+        .expect("dump_test_simple not found");
+    let mv_pos = stdout
+        .find("CREATE MATERIALIZED VIEW public.matview")
+        .expect("matview not found");
+    assert!(
+        table_pos < mv_pos,
+        "CREATE TABLE should appear before CREATE MATERIALIZED VIEW in dump"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: REFRESH MATERIALIZED VIEW not emitted
-/// REFRESH MATERIALIZED VIEW matview / matview_second / matview_third /
-/// matview_fourth.
-fn refresh_materialized_views() {}
+/// REFRESH MATERIALIZED VIEW matview / matview_second.
+fn refresh_materialized_views() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("REFRESH MATERIALIZED VIEW"),
+        "output should contain REFRESH MATERIALIZED VIEW:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("public.matview"),
+        "REFRESH should reference public.matview:\n{stdout}"
+    );
+}
 
 // ---------------------------------------------------------------
 // Module: Policies (RLS)
@@ -931,10 +1100,22 @@ fn create_measurement_partitioned() {}
 fn create_measurement_partition() {}
 
 #[test]
-#[ignore] // not yet implemented: trigger DDL not emitted
-/// Triggers on partitions: creation, disabled/replica/always variants,
-/// and trigger preservation across dump/restore.
-fn partition_triggers() {}
+/// Triggers on partitions: a trigger on test_table_part is disabled, verifying
+/// trigger DDL emission and DISABLE TRIGGER ALL handling.
+fn partition_triggers() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    // The trigger on test_table_part was created and then disabled.
+    assert!(
+        stdout.contains("test_trigger_disabled"),
+        "output should contain test_trigger_disabled:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("DISABLE TRIGGER ALL"),
+        "output should contain DISABLE TRIGGER ALL for test_table_part:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: needs generated column table setup
@@ -1012,15 +1193,40 @@ fn create_inheritance_tables() {
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: extended statistics objects not emitted
-/// CREATE STATISTICS extended_stats_no_options / extended_stats_options /
-/// extended_stats_expression.
-fn create_extended_statistics() {}
+/// CREATE STATISTICS extended_stats_options.
+fn create_extended_statistics() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE STATISTICS"),
+        "output should contain CREATE STATISTICS:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("extended_stats_options"),
+        "output should contain extended_stats_options:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: extended statistics objects not emitted
-/// ALTER STATISTICS extended_stats_options.
-fn alter_extended_statistics() {}
+/// ALTER STATISTICS extended_stats_options SET STATISTICS.
+fn alter_extended_statistics() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER STATISTICS"),
+        "output should contain ALTER STATISTICS:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("SET STATISTICS"),
+        "output should contain SET STATISTICS:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("extended_stats_options"),
+        "ALTER STATISTICS should reference extended_stats_options:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: statistics import not emitted
@@ -1286,9 +1492,21 @@ fn create_access_method_table_am() {}
 fn create_table_am() {}
 
 #[test]
-#[ignore] // not yet implemented: materialized view with custom AM not emitted
-/// CREATE MATERIALIZED VIEW regress_pg_dump_matview_am.
-fn create_matview_am() {}
+/// CREATE MATERIALIZED VIEW regress_pg_dump_matview_am (using heap AM).
+fn create_matview_am() {
+    crate::common::setup_issue50_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    // Our matview is created with the default heap AM.
+    assert!(
+        stdout.contains("CREATE MATERIALIZED VIEW"),
+        "output should contain CREATE MATERIALIZED VIEW:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("public.matview"),
+        "output should reference public.matview:\n{stdout}"
+    );
+}
 
 // ---------------------------------------------------------------
 // Module: Partitioned table with regress_pg_dump_table_part

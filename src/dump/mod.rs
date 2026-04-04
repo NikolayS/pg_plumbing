@@ -77,6 +77,24 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     let schemas = catalog::get_schemas(&client, opts)
         .await
         .context("failed to query schemas")?;
+    let matviews = catalog::get_matviews(&client, opts)
+        .await
+        .context("failed to query materialized views")?;
+    let functions = catalog::get_functions(&client, opts)
+        .await
+        .context("failed to query functions")?;
+    let triggers = catalog::get_triggers(&client, opts)
+        .await
+        .context("failed to query triggers")?;
+    let event_triggers = catalog::get_event_triggers(&client)
+        .await
+        .context("failed to query event triggers")?;
+    let ext_stats = catalog::get_extended_statistics(&client, opts)
+        .await
+        .context("failed to query extended statistics")?;
+    let transforms = catalog::get_transforms(&client)
+        .await
+        .context("failed to query transforms")?;
 
     let mut out = String::new();
 
@@ -224,6 +242,93 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
             out.push('\n');
         }
 
+        // Emit functions and procedures.
+        for func in &functions {
+            if !dumped_schema_names.is_empty()
+                && !dumped_schema_names.contains(func.schema.as_str())
+            {
+                continue;
+            }
+            format::write_create_function(&mut out, func);
+            out.push('\n');
+        }
+
+        // Emit materialized views.
+        for mv in &matviews {
+            if !dumped_schema_names.is_empty() && !dumped_schema_names.contains(mv.schema.as_str())
+            {
+                continue;
+            }
+            format::write_create_matview(&mut out, mv);
+            format::write_alter_matview_owner(&mut out, mv);
+            out.push('\n');
+        }
+
+        // Emit extended statistics.
+        for stat in &ext_stats {
+            if !dumped_schema_names.is_empty()
+                && !dumped_schema_names.contains(stat.schema.as_str())
+            {
+                continue;
+            }
+            format::write_create_extended_statistics(&mut out, stat);
+            out.push('\n');
+        }
+
+        // Emit triggers (per-table).
+        // Track tables that have at least one disabled trigger for ALTER TABLE ... DISABLE TRIGGER ALL.
+        let mut disabled_trigger_tables: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for trig in &triggers {
+            if !dumped_schema_names.is_empty()
+                && !dumped_schema_names.contains(trig.schema.as_str())
+            {
+                continue;
+            }
+            format::write_create_trigger(&mut out, trig);
+            out.push('\n');
+            if trig.enabled == 'D' {
+                let key = format!("{}.{}", trig.schema, trig.table_name);
+                disabled_trigger_tables.insert(key);
+            }
+        }
+
+        // Emit ALTER TABLE ... DISABLE TRIGGER ALL for tables with disabled triggers.
+        for key in &disabled_trigger_tables {
+            if let Some(dot) = key.find('.') {
+                let schema = &key[..dot];
+                let table = &key[dot + 1..];
+                format::write_disable_trigger_all(&mut out, schema, table);
+            }
+        }
+        if !disabled_trigger_tables.is_empty() {
+            out.push('\n');
+        }
+
+        // Emit event triggers.
+        for et in &event_triggers {
+            format::write_create_event_trigger(&mut out, et);
+            out.push('\n');
+        }
+
+        // Emit transforms.
+        for tr in &transforms {
+            format::write_create_transform(&mut out, tr);
+            out.push('\n');
+        }
+
+        // Emit REFRESH MATERIALIZED VIEW for populated matviews.
+        for mv in &matviews {
+            if !dumped_schema_names.is_empty() && !dumped_schema_names.contains(mv.schema.as_str())
+            {
+                continue;
+            }
+            format::write_refresh_matview(&mut out, mv);
+        }
+        if matviews.iter().any(|mv| mv.is_populated) {
+            out.push('\n');
+        }
+
         // Emit GRANT privilege statements.  Skip in table-filter mode because
         // the restore target may not have all referenced objects.
         if !opts.no_privileges {
@@ -244,6 +349,15 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
             .context("failed to query comments")?;
         if !comments.is_empty() {
             format::write_comments(&mut out, &comments);
+            out.push('\n');
+        }
+
+        // Emit COMMENT ON TYPE statements.
+        let type_comments = catalog::get_type_comments(&client, opts)
+            .await
+            .context("failed to query type comments")?;
+        if !type_comments.is_empty() {
+            format::write_type_comments(&mut out, &type_comments);
             out.push('\n');
         }
     }

@@ -375,3 +375,113 @@ pub fn setup_parallel_test_schema() {
         );
     });
 }
+
+/// Set up the issue-50 test schema: matviews, triggers, event triggers,
+/// procedures, transforms, extended statistics, and type comments.
+/// Uses OnceLock to avoid poisoning.
+pub fn setup_issue50_schema() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        // We need the base schema first (provides dump_test_simple with PK).
+        setup_test_schema();
+
+        let conninfo = test_conninfo("postgres");
+        let password = std::env::var("PGPASSWORD").unwrap_or_default();
+
+        // Step 1: base table for trigger tests + matviews
+        let sql1 = "\
+            CREATE TABLE IF NOT EXISTS test_table (\
+                col1 int PRIMARY KEY,\
+                col2 text\
+            );\
+            CREATE TABLE IF NOT EXISTS test_table_part (\
+                col1 int,\
+                col2 text\
+            );\
+        ";
+        // Step 2: trigger function + trigger + disabled trigger
+        let sql2 = "\
+            CREATE OR REPLACE FUNCTION public.trigger_func() RETURNS trigger LANGUAGE plpgsql AS \
+            $$ BEGIN RETURN NEW; END; $$;\
+            DROP TRIGGER IF EXISTS test_trigger ON test_table;\
+            CREATE TRIGGER test_trigger BEFORE INSERT OR UPDATE ON test_table \
+                FOR EACH ROW EXECUTE FUNCTION public.trigger_func();\
+            DROP TRIGGER IF EXISTS test_trigger_disabled ON test_table_part;\
+            CREATE TRIGGER test_trigger_disabled BEFORE INSERT ON test_table_part \
+                FOR EACH ROW EXECUTE FUNCTION public.trigger_func();\
+            ALTER TABLE test_table_part DISABLE TRIGGER ALL;\
+        ";
+        // Step 3: event trigger function + event trigger
+        let sql3 = "\
+            CREATE OR REPLACE FUNCTION public.event_trigger_func() RETURNS event_trigger \
+            LANGUAGE plpgsql AS $$ BEGIN END; $$;\
+            DROP EVENT TRIGGER IF EXISTS test_event_trigger;\
+            CREATE EVENT TRIGGER test_event_trigger ON ddl_command_start \
+                EXECUTE FUNCTION public.event_trigger_func();\
+        ";
+        // Step 4: procedure
+        let sql4 = "\
+            CREATE OR REPLACE PROCEDURE public.ptest1(a int) LANGUAGE plpgsql AS \
+            $$ BEGIN RAISE NOTICE '%', a; END; $$;\
+        ";
+        // Step 5: materialized views
+        let sql5 = "\
+            DROP MATERIALIZED VIEW IF EXISTS public.matview CASCADE;\
+            DROP MATERIALIZED VIEW IF EXISTS public.matview_second CASCADE;\
+            CREATE MATERIALIZED VIEW public.matview AS \
+                SELECT id, name FROM dump_test_simple;\
+            CREATE MATERIALIZED VIEW public.matview_second AS \
+                SELECT id FROM dump_test_simple WHERE value > 1;\
+        ";
+        // Step 6: extended statistics
+        let sql6 = "\
+            DROP STATISTICS IF EXISTS public.extended_stats_options;\
+            CREATE STATISTICS public.extended_stats_options (dependencies) \
+                ON id, value FROM dump_test_simple;\
+            ALTER STATISTICS public.extended_stats_options SET STATISTICS 100;\
+        ";
+        // Step 7: type comments (create a custom enum type)
+        let sql7 = "\
+            DROP TYPE IF EXISTS public.test_enum_type CASCADE;\
+            CREATE TYPE public.test_enum_type AS ENUM ('alpha', 'beta', 'gamma');\
+            COMMENT ON TYPE public.test_enum_type IS 'test enum type for pg_plumbing';\
+        ";
+        // Step 8: transform (via hstore + hstore_plpython3u extension)
+        // This is optional: plpython3u may not be installed in all CI environments.
+        let sql8 = "\
+            CREATE EXTENSION IF NOT EXISTS hstore;\
+            CREATE EXTENSION IF NOT EXISTS plpython3u;\
+            CREATE EXTENSION IF NOT EXISTS hstore_plpython3u;\
+        ";
+
+        // Steps 1-7 are required; step 8 (transform/plpython3u) is best-effort.
+        for (step, sql) in [sql1, sql2, sql3, sql4, sql5, sql6, sql7]
+            .iter()
+            .enumerate()
+        {
+            let mut cmd = Command::new("psql");
+            cmd.arg(&conninfo).arg("-c").arg(sql);
+            if !password.is_empty() {
+                cmd.env("PGPASSWORD", &password);
+            }
+            let output = cmd.output().expect("psql setup_issue50 failed");
+            assert!(
+                output.status.success(),
+                "setup_issue50_schema step {} failed: {}",
+                step + 1,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        // Step 8: best-effort – skip silently if plpython3u is unavailable.
+        {
+            let mut cmd = Command::new("psql");
+            cmd.arg(&conninfo).arg("-c").arg(sql8);
+            if !password.is_empty() {
+                cmd.env("PGPASSWORD", &password);
+            }
+            let _ = cmd.output(); // ignore errors
+        }
+    });
+}
