@@ -75,6 +75,18 @@ fn parallel_restore() {
     // verify row counts
     let count = crate::common::psql_query(&dest_db, "SELECT COUNT(*) FROM tplain");
     assert_eq!(count.trim(), "100", "tplain row count mismatch: {count}");
+    let ths_count = crate::common::psql_query(&dest_db, "SELECT COUNT(*) FROM ths");
+    assert_eq!(
+        ths_count.trim(),
+        "300",
+        "ths row count mismatch: {ths_count}"
+    );
+    let tht_count = crate::common::psql_query(&dest_db, "SELECT COUNT(*) FROM tht");
+    assert_eq!(
+        tht_count.trim(),
+        "300",
+        "tht row count mismatch: {tht_count}"
+    );
 
     crate::common::drop_test_db(&dest_db);
     let _ = std::fs::remove_dir_all(&dump_dir);
@@ -141,6 +153,18 @@ fn parallel_restore_inserts() {
 
     let count = crate::common::psql_query(&dest_db, "SELECT COUNT(*) FROM tplain");
     assert_eq!(count.trim(), "100");
+    let ths_count = crate::common::psql_query(&dest_db, "SELECT COUNT(*) FROM ths");
+    assert_eq!(
+        ths_count.trim(),
+        "300",
+        "ths row count mismatch: {ths_count}"
+    );
+    let tht_count = crate::common::psql_query(&dest_db, "SELECT COUNT(*) FROM tht");
+    assert_eq!(
+        tht_count.trim(),
+        "300",
+        "tht row count mismatch: {tht_count}"
+    );
 
     crate::common::drop_test_db(&dest_db);
     let _ = std::fs::remove_dir_all(&dump_dir);

@@ -83,7 +83,9 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
         let enum_types = get_enum_types(&client).await?;
         for (type_schema, type_name, type_ddl) in &enum_types {
             let type_key = format!("{type_schema}.{type_name}");
-            let type_file = format!("{type_name}.type.ddl");
+            let safe_schema = type_schema.replace('.', "_");
+            let safe_name = type_name.replace('.', "_");
+            let type_file = format!("{safe_schema}__{safe_name}.type.ddl");
             let type_path = dir_path.join(&type_file);
             std::fs::write(&type_path, type_ddl)
                 .with_context(|| format!("failed to write {type_file}"))?;
@@ -96,7 +98,9 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
             let sequences = get_table_sequences(&client, table).await?;
             for (seq_schema, seq_name, seq_ddl) in &sequences {
                 let seq_key = format!("{seq_schema}.{seq_name}");
-                let seq_file = format!("{seq_name}.seq.ddl");
+                let safe_schema = seq_schema.replace('.', "_");
+                let safe_name = seq_name.replace('.', "_");
+                let seq_file = format!("{safe_schema}__{safe_name}.seq.ddl");
                 let seq_path = dir_path.join(&seq_file);
                 std::fs::write(&seq_path, seq_ddl)
                     .with_context(|| format!("failed to write {seq_file}"))?;

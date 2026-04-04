@@ -201,11 +201,9 @@ pub async fn restore_directory(input_dir: &str, opts: &RestoreOptions) -> Result
                     }
                 });
 
-                if let Err(e) =
-                    restore_data_file(&dir_path, &worker_client, &qname, &dat_file).await
-                {
-                    eprintln!("pg_restore: warning: data error for {qname}: {e}");
-                }
+                restore_data_file(&dir_path, &worker_client, &qname, &dat_file)
+                    .await
+                    .with_context(|| format!("parallel restore: data error for {qname}"))?;
                 Ok::<(), anyhow::Error>(())
             });
 
@@ -213,10 +211,12 @@ pub async fn restore_directory(input_dir: &str, opts: &RestoreOptions) -> Result
         }
 
         for handle in handles {
-            handle
-                .await
-                .context("parallel restore task panicked")?
-                .context("parallel restore task failed")?;
+            match handle.await.context("parallel restore task panicked")? {
+                Ok(()) => {}
+                Err(e) => {
+                    eprintln!("pg_restore: warning: {e}");
+                }
+            }
         }
     }
 

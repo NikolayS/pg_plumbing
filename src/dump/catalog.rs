@@ -26,6 +26,8 @@ pub struct TableInfo {
     pub partition_bound: Option<String>,
     /// Name of the parent partitioned table — Some for partition children.
     pub parent_table: Option<String>,
+    /// Schema of the parent partitioned table — Some for partition children.
+    pub parent_schema: Option<String>,
 }
 
 /// Metadata for a single column.
@@ -79,7 +81,13 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
                          FROM pg_catalog.pg_inherits i
                          JOIN pg_catalog.pg_class p ON p.oid = i.inhparent
                          WHERE i.inhrelid = c.oid
-                         LIMIT 1) AS parent_table
+                         LIMIT 1) AS parent_table,
+                        (SELECT pn.nspname
+                         FROM pg_catalog.pg_inherits i
+                         JOIN pg_catalog.pg_class p ON p.oid = i.inhparent
+                         JOIN pg_catalog.pg_namespace pn ON pn.oid = p.relnamespace
+                         WHERE i.inhrelid = c.oid
+                         LIMIT 1) AS parent_schema
                  from pg_catalog.pg_class c
                  join pg_catalog.pg_namespace n on n.oid = c.relnamespace
                  where c.relkind in ('r', 'p')
@@ -110,7 +118,13 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
                              FROM pg_catalog.pg_inherits i
                              JOIN pg_catalog.pg_class p ON p.oid = i.inhparent
                              WHERE i.inhrelid = c.oid
-                             LIMIT 1) AS parent_table
+                             LIMIT 1) AS parent_table,
+                            (SELECT pn.nspname
+                             FROM pg_catalog.pg_inherits i
+                             JOIN pg_catalog.pg_class p ON p.oid = i.inhparent
+                             JOIN pg_catalog.pg_namespace pn ON pn.oid = p.relnamespace
+                             WHERE i.inhrelid = c.oid
+                             LIMIT 1) AS parent_schema
                      from pg_catalog.pg_class c
                      join pg_catalog.pg_namespace n
                        on n.oid = c.relnamespace
@@ -137,6 +151,7 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
         let partition_key: Option<String> = row.get("partition_key");
         let partition_bound: Option<String> = row.get("partition_bound");
         let parent_table: Option<String> = row.get("parent_table");
+        let parent_schema: Option<String> = row.get("parent_schema");
 
         // Schema inclusion filter.
         if !opts.schemas.is_empty() && !opts.schemas.iter().any(|s| s == schema) {
@@ -150,15 +165,9 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
 
         let _ = relkind; // used implicitly via partition_key/partition_bound
 
-        // For partition children, columns are inherited — skip column query
-        // (partition child DDL uses PARTITION OF syntax, not column list).
-        let columns = if partition_bound.is_some() {
-            // Partition child — columns are inherited, but we still query them
-            // for data dumping purposes.
-            get_columns(client, oid).await?
-        } else {
-            get_columns(client, oid).await?
-        };
+        // Query columns for all tables — used both for DDL (regular/partitioned
+        // parents) and for data dumping (partition children).
+        let columns = get_columns(client, oid).await?;
         let primary_key = get_primary_key(client, oid).await?;
 
         tables.push(TableInfo {
@@ -169,6 +178,7 @@ pub async fn get_tables(client: &Client, opts: &DumpOptions) -> Result<Vec<Table
             partition_key: partition_key.filter(|s| !s.is_empty()),
             partition_bound: partition_bound.filter(|s| !s.is_empty()),
             parent_table,
+            parent_schema,
         });
     }
 
