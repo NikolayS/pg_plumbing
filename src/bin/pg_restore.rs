@@ -89,7 +89,7 @@ fn main() {
     // Too many positional args (more than 1 file)
     if cli.filenames.len() > 1 {
         eprintln!(
-            "pg_restore: too many command-line arguments (first is \"{}\")",
+            "pg_restore: error: too many command-line arguments (first is \"{}\")",
             cli.filenames[1]
         );
         std::process::exit(1);
@@ -98,11 +98,11 @@ fn main() {
     // Validate format if provided
     if let Some(ref fmt) = cli.format {
         if fmt.is_empty() {
-            eprintln!("pg_restore: invalid archive format \"\"");
+            eprintln!("pg_restore: error: unrecognized archive format \"\";");
             std::process::exit(1);
         }
         if !validate_format(fmt) {
-            eprintln!("pg_restore: invalid archive format \"{fmt}\"");
+            eprintln!("pg_restore: error: unrecognized archive format \"{fmt}\";");
             std::process::exit(1);
         }
     }
@@ -110,26 +110,28 @@ fn main() {
     // --data-only + --schema-only
     if cli.data_only && cli.schema_only {
         eprintln!(
-            "pg_restore: options -a/--data-only and -s/--schema-only cannot be used together"
+            "pg_restore: error: options -s/--schema-only and -a/--data-only cannot be used together"
         );
         std::process::exit(1);
     }
 
     // -d and -f cannot be used together
     if cli.dbname.is_some() && cli.file.is_some() {
-        eprintln!("pg_restore: options -d/--dbname and -f/--file cannot be used together");
+        eprintln!("pg_restore: error: options -d/--dbname and -f/--file cannot be used together");
         std::process::exit(1);
     }
 
     // --clean + --data-only
     if cli.clean && cli.data_only {
-        eprintln!("pg_restore: options -c/--clean and -a/--data-only cannot be used together");
+        eprintln!(
+            "pg_restore: error: options -c/--clean and -a/--data-only cannot be used together"
+        );
         std::process::exit(1);
     }
 
     // --if-exists requires --clean
     if cli.if_exists && !cli.clean {
-        eprintln!("pg_restore: option --if-exists requires option -c/--clean");
+        eprintln!("pg_restore: error: option --if-exists requires option -c/--clean");
         std::process::exit(1);
     }
 
@@ -137,11 +139,11 @@ fn main() {
     if let Some(ref jobs_str) = cli.jobs {
         match jobs_str.parse::<i64>() {
             Ok(n) if !(1..=1000).contains(&n) => {
-                eprintln!("pg_restore: invalid number of parallel jobs: {n}");
+                eprintln!("pg_restore: error: -j/--jobs must be in range");
                 std::process::exit(1);
             }
             Err(_) => {
-                eprintln!("pg_restore: invalid number of parallel jobs: \"{jobs_str}\"");
+                eprintln!("pg_restore: error: -j/--jobs must be in range \"{jobs_str}\"");
                 std::process::exit(1);
             }
             Ok(_) => {}
@@ -150,14 +152,14 @@ fn main() {
 
     // --single-transaction + -j
     if cli.single_transaction && cli.jobs.is_some() {
-        eprintln!("pg_restore: options --single-transaction and --jobs cannot be used together");
+        eprintln!("pg_restore: error: cannot specify both --single-transaction and multiple jobs");
         std::process::exit(1);
     }
 
     // --create + --single-transaction
     if cli.create && cli.single_transaction {
         eprintln!(
-            "pg_restore: options -C/--create and -1/--single-transaction cannot be used together"
+            "pg_restore: error: options -C/--create and -1/--single-transaction cannot be used together"
         );
         std::process::exit(1);
     }
@@ -172,7 +174,9 @@ fn main() {
 
     // --data-only + --globals-only
     if cli.data_only && cli.globals_only {
-        eprintln!("pg_restore: options -a/--data-only and --globals-only cannot be used together");
+        eprintln!(
+            "pg_restore: error: options -a/--data-only and --globals-only cannot be used together"
+        );
         std::process::exit(1);
     }
 
@@ -194,7 +198,9 @@ fn main() {
 
     // --globals-only + --no-globals
     if cli.globals_only && cli.no_globals {
-        eprintln!("pg_restore: options --globals-only and --no-globals cannot be used together");
+        eprintln!(
+            "pg_restore: error: options --globals-only and --no-globals cannot be used together"
+        );
         std::process::exit(1);
     }
 
@@ -203,20 +209,22 @@ fn main() {
     // this error when --globals-only is used with a positional file
     // (which would need to be a real dumpall archive to proceed).
     if cli.globals_only && !cli.filenames.is_empty() {
-        eprintln!("pg_restore: --globals-only can only be used with pg_dumpall archives");
+        eprintln!("pg_restore: error: --globals-only can only be used with pg_dumpall archives");
         std::process::exit(1);
     }
 
     // --exclude-database requires dumpall archive
     if cli.exclude_database.is_some() && !cli.filenames.is_empty() {
-        eprintln!("pg_restore: --exclude-database can only be used with pg_dumpall archives");
+        eprintln!(
+            "pg_restore: error: --exclude-database can only be used with pg_dumpall archives"
+        );
         std::process::exit(1);
     }
 
     // Require either -d or -f or a positional file
     let has_output = cli.dbname.is_some() || cli.file.is_some() || !cli.filenames.is_empty();
     if !has_output {
-        eprintln!("pg_restore: one of -d/--dbname and -f/--file must be specified");
+        eprintln!("pg_restore: error: one of -d/--dbname and -f/--file must be specified");
         std::process::exit(1);
     }
 
@@ -224,7 +232,7 @@ fn main() {
     let dbname = match cli.dbname {
         Some(ref d) => d.clone(),
         None => {
-            eprintln!("pg_restore: no database specified (use -d)");
+            eprintln!("pg_restore: error: no database specified (use -d)");
             std::process::exit(1);
         }
     };
@@ -233,7 +241,7 @@ fn main() {
     let filename = match cli.filenames.first() {
         Some(f) => f.clone(),
         None => {
-            eprintln!("pg_restore: no input file specified");
+            eprintln!("pg_restore: error: no input file specified");
             std::process::exit(1);
         }
     };
@@ -257,21 +265,21 @@ fn main() {
     if std::path::Path::new(&filename).is_dir() {
         rt.block_on(restore::restore_directory(&filename, &opts))
             .unwrap_or_else(|e| {
-                eprintln!("pg_restore: {e}");
+                eprintln!("pg_restore: error: {e}");
                 std::process::exit(1);
             });
         return;
     }
 
     let file_bytes = std::fs::read(&filename).unwrap_or_else(|e| {
-        eprintln!("pg_restore: could not open file \"{filename}\": {e}");
+        eprintln!("pg_restore: error: could not open file \"{filename}\": {e}");
         std::process::exit(1);
     });
 
     if restore::is_custom_format(&file_bytes) {
         rt.block_on(restore::restore_custom(&file_bytes, &opts))
             .unwrap_or_else(|e| {
-                eprintln!("pg_restore: {e}");
+                eprintln!("pg_restore: error: {e}");
                 std::process::exit(1);
             });
     } else {
@@ -279,7 +287,7 @@ fn main() {
         let sql = String::from_utf8_lossy(&file_bytes).to_string();
         rt.block_on(restore::restore_plain(&sql, &opts))
             .unwrap_or_else(|e| {
-                eprintln!("pg_restore: {e}");
+                eprintln!("pg_restore: error: {e}");
                 std::process::exit(1);
             });
     }

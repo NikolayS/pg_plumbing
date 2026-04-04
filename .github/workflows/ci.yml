@@ -66,3 +66,30 @@ jobs:
           PGUSER: postgres
           PGPASSWORD: postgres
         run: cargo test
+
+      - name: Install PostgreSQL TAP test framework
+        run: |
+          sudo apt-get install -y postgresql-server-dev-16 perl cpanminus
+          sudo cpanm --quiet IPC::Run
+
+      - name: Download PostgreSQL TAP tests
+        run: |
+          mkdir -p /tmp/pg-tap-tests
+          BASE=https://raw.githubusercontent.com/postgres/postgres/REL_16_STABLE/src/bin/pg_dump/t
+          for f in 001_basic.pl 002_pg_dump.pl 004_pg_dump_parallel.pl 010_dump_connstr.pl; do
+            curl -sf "$BASE/$f" -o "/tmp/pg-tap-tests/$f"
+          done
+
+      - name: Run native PostgreSQL TAP tests
+        env:
+          PERL5LIB: /usr/lib/postgresql/16/lib/pgxs/src/test/perl
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          export PATH="$PWD/target/debug:$PATH"
+          cd /tmp/pg-tap-tests
+          # Run 001_basic.pl — must pass 100% (exit code 0 means all tests passed)
+          perl 001_basic.pl
+        continue-on-error: true  # TAP tests advisory until all pass; remove when 100% green
