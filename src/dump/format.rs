@@ -7,10 +7,12 @@ use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
 use super::catalog::{
-    format_fdw_options, parse_acl_entry, quote_ident, ColumnInfo, ConstraintInfo, EventTriggerInfo,
-    ExtendedStatInfo, FdwInfo, ForeignServerInfo, ForeignTableInfo, FunctionInfo, LargeObjectInfo,
+    format_fdw_options, parse_acl_entry, quote_ident, AccessMethodInfo, AggregateInfo, CastInfo,
+    CollationInfo, ColumnInfo, ConstraintInfo, ConversionInfo, EventTriggerInfo, ExtendedStatInfo,
+    FdwInfo, ForeignServerInfo, ForeignTableInfo, FunctionInfo, LanguageInfo, LargeObjectInfo,
     MatviewInfo, PolicyInfo, PrivilegeInfo, PublicationInfo, SchemaInfo, SequenceInfo, TableInfo,
-    TransformInfo, TriggerInfo, TypeCommentInfo, UserMappingInfo, ViewInfo,
+    TransformInfo, TriggerInfo, TsConfigInfo, TsDictInfo, TsParserInfo, TsTemplateInfo,
+    TypeCommentInfo, UserMappingInfo, ViewInfo,
 };
 use super::DumpOptions;
 
@@ -97,6 +99,11 @@ pub fn write_create_table(out: &mut String, table: &TableInfo) {
     // Append PARTITION BY clause for partitioned tables.
     if let Some(ref partkey) = table.partition_key {
         out.push_str(&format!("\nPARTITION BY {partkey}"));
+    }
+
+    // Append USING clause for tables with a non-default access method.
+    if let Some(ref am) = table.am_name {
+        out.push_str(&format!("\nUSING {}", quote_ident(am)));
     }
 
     out.push_str(";\n");
@@ -1044,6 +1051,363 @@ pub fn write_alter_table_cluster(out: &mut String, table: &TableInfo, index_name
         quote_ident(index_name)
     ));
 }
+
+// ── Issue-53 format functions ──────────────────────────────────────────────
+
+/// Write a `CREATE TEXT SEARCH TEMPLATE` statement.
+pub fn write_create_ts_template(out: &mut String, tmpl: &TsTemplateInfo) {
+    let qname = format!("{}.{}", quote_ident(&tmpl.schema), quote_ident(&tmpl.name));
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: TEXT SEARCH TEMPLATE\n--\n\n",
+        tmpl.name
+    ));
+    out.push_str(&format!("CREATE TEXT SEARCH TEMPLATE {qname} (\n"));
+    if !tmpl.init_func.is_empty() {
+        let init_q = if tmpl.init_schema == "pg_catalog" || tmpl.init_schema.is_empty() {
+            quote_ident(&tmpl.init_func)
+        } else {
+            format!(
+                "{}.{}",
+                quote_ident(&tmpl.init_schema),
+                quote_ident(&tmpl.init_func)
+            )
+        };
+        out.push_str(&format!("    INIT = {init_q},\n"));
+    }
+    let lex_q = if tmpl.lexize_schema == "pg_catalog" || tmpl.lexize_schema.is_empty() {
+        quote_ident(&tmpl.lexize_func)
+    } else {
+        format!(
+            "{}.{}",
+            quote_ident(&tmpl.lexize_schema),
+            quote_ident(&tmpl.lexize_func)
+        )
+    };
+    out.push_str(&format!("    LEXIZE = {lex_q}\n"));
+    out.push_str(");\n");
+}
+
+/// Write a `CREATE TEXT SEARCH PARSER` statement.
+pub fn write_create_ts_parser(out: &mut String, prs: &TsParserInfo) {
+    let qname = format!("{}.{}", quote_ident(&prs.schema), quote_ident(&prs.name));
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: TEXT SEARCH PARSER\n--\n\n",
+        prs.name
+    ));
+    out.push_str(&format!("CREATE TEXT SEARCH PARSER {qname} (\n"));
+    let qualify_fn = |schema: &str, name: &str| -> String {
+        if schema == "pg_catalog" || schema.is_empty() {
+            quote_ident(name)
+        } else {
+            format!("{}.{}", quote_ident(schema), quote_ident(name))
+        }
+    };
+    out.push_str(&format!(
+        "    START = {},\n",
+        qualify_fn(&prs.start_schema, &prs.start_func)
+    ));
+    out.push_str(&format!(
+        "    GETTOKEN = {},\n",
+        qualify_fn(&prs.gettoken_schema, &prs.gettoken_func)
+    ));
+    out.push_str(&format!(
+        "    END = {},\n",
+        qualify_fn(&prs.end_schema, &prs.end_func)
+    ));
+    out.push_str(&format!(
+        "    LEXTYPES = {}",
+        qualify_fn(&prs.lextypes_schema, &prs.lextypes_func)
+    ));
+    if !prs.headline_func.is_empty() {
+        out.push_str(&format!(
+            ",\n    HEADLINE = {}",
+            qualify_fn(&prs.headline_schema, &prs.headline_func)
+        ));
+    }
+    out.push_str("\n);\n");
+}
+
+/// Write `CREATE TEXT SEARCH DICTIONARY` and `ALTER TEXT SEARCH DICTIONARY … OWNER TO`.
+pub fn write_create_ts_dict(out: &mut String, dict: &TsDictInfo) {
+    let qname = format!("{}.{}", quote_ident(&dict.schema), quote_ident(&dict.name));
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: TEXT SEARCH DICTIONARY\n--\n\n",
+        dict.name
+    ));
+    let tmpl_q = if dict.tmpl_schema == "pg_catalog" {
+        quote_ident(&dict.tmpl_name)
+    } else {
+        format!(
+            "{}.{}",
+            quote_ident(&dict.tmpl_schema),
+            quote_ident(&dict.tmpl_name)
+        )
+    };
+    out.push_str(&format!(
+        "CREATE TEXT SEARCH DICTIONARY {qname} (\n    TEMPLATE = {tmpl_q}"
+    ));
+    if !dict.options.is_empty() {
+        out.push_str(&format!(",\n    {}", dict.options));
+    }
+    out.push_str("\n);\n");
+}
+
+/// Write `ALTER TEXT SEARCH DICTIONARY … OWNER TO …`.
+pub fn write_alter_ts_dict_owner(out: &mut String, dict: &TsDictInfo) {
+    let qname = format!("{}.{}", quote_ident(&dict.schema), quote_ident(&dict.name));
+    out.push_str(&format!(
+        "ALTER TEXT SEARCH DICTIONARY {qname} OWNER TO {};\n",
+        quote_ident(&dict.owner)
+    ));
+}
+
+/// Write `CREATE TEXT SEARCH CONFIGURATION` + `ALTER … OWNER TO`.
+pub fn write_create_ts_config(out: &mut String, cfg: &TsConfigInfo) {
+    let qname = format!("{}.{}", quote_ident(&cfg.schema), quote_ident(&cfg.name));
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: TEXT SEARCH CONFIGURATION\n--\n\n",
+        cfg.name
+    ));
+    let parser_q = if cfg.parser_schema == "pg_catalog" {
+        quote_ident(&cfg.parser_name)
+    } else {
+        format!(
+            "{}.{}",
+            quote_ident(&cfg.parser_schema),
+            quote_ident(&cfg.parser_name)
+        )
+    };
+    out.push_str(&format!(
+        "CREATE TEXT SEARCH CONFIGURATION {qname} (\n    PARSER = {parser_q}\n);\n"
+    ));
+}
+
+/// Write `ALTER TEXT SEARCH CONFIGURATION … OWNER TO …`.
+pub fn write_alter_ts_config_owner(out: &mut String, cfg: &TsConfigInfo) {
+    let qname = format!("{}.{}", quote_ident(&cfg.schema), quote_ident(&cfg.name));
+    out.push_str(&format!(
+        "ALTER TEXT SEARCH CONFIGURATION {qname} OWNER TO {};\n",
+        quote_ident(&cfg.owner)
+    ));
+}
+
+/// Write `ALTER TEXT SEARCH CONFIGURATION … ADD MAPPING` statements.
+pub fn write_alter_ts_config_mappings(out: &mut String, cfg: &TsConfigInfo) {
+    let qname = format!("{}.{}", quote_ident(&cfg.schema), quote_ident(&cfg.name));
+    for (token_alias, dict_schema, dict_name) in &cfg.mappings {
+        let dict_q = if dict_schema == "pg_catalog" {
+            quote_ident(dict_name)
+        } else {
+            format!("{}.{}", quote_ident(dict_schema), quote_ident(dict_name))
+        };
+        out.push_str(&format!(
+            "ALTER TEXT SEARCH CONFIGURATION {qname}\n    ADD MAPPING FOR {token_alias} WITH {dict_q};\n"
+        ));
+    }
+}
+
+/// Write `COMMENT ON TEXT SEARCH CONFIGURATION …`.
+pub fn write_ts_config_comment(out: &mut String, cfg: &TsConfigInfo) {
+    if let Some(ref comment) = cfg.comment {
+        let qname = format!("{}.{}", quote_ident(&cfg.schema), quote_ident(&cfg.name));
+        let escaped = comment.replace('\'', "''");
+        out.push_str(&format!(
+            "COMMENT ON TEXT SEARCH CONFIGURATION {qname} IS '{escaped}';\n"
+        ));
+    }
+}
+
+/// Write a `CREATE ACCESS METHOD` statement.
+pub fn write_create_access_method(out: &mut String, am: &AccessMethodInfo) {
+    let am_type = if am.amtype == 't' { "TABLE" } else { "INDEX" };
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: ACCESS METHOD\n--\n\nCREATE ACCESS METHOD {} TYPE {} HANDLER {};\n",
+        am.name,
+        quote_ident(&am.name),
+        am_type,
+        quote_ident(&am.handler_func),
+    ));
+}
+
+/// Write a `CREATE AGGREGATE` statement.
+pub fn write_create_aggregate(out: &mut String, agg: &AggregateInfo) {
+    let qname = format!("{}.{}", quote_ident(&agg.schema), quote_ident(&agg.name));
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: AGGREGATE\n--\n\n",
+        agg.name
+    ));
+    let args = agg.arg_types.join(", ");
+    out.push_str(&format!("CREATE AGGREGATE {qname} ({args}) (\n"));
+    out.push_str(&format!("    sfunc = {},\n", agg.transfn));
+    out.push_str(&format!("    stype = {}", agg.stype));
+    if !agg.initcond.is_empty() {
+        out.push_str(&format!(
+            ",\n    initcond = '{}'",
+            agg.initcond.replace('\'', "''")
+        ));
+    }
+    out.push_str("\n);\n");
+}
+
+/// Write a `CREATE CAST` statement.
+pub fn write_create_cast(out: &mut String, cast: &CastInfo) {
+    out.push_str(&format!(
+        "--\n-- Name: CAST ({} AS {}); Type: CAST\n--\n\n",
+        cast.source_type, cast.target_type
+    ));
+    out.push_str(&format!(
+        "CREATE CAST ({} AS {})",
+        cast.source_type, cast.target_type
+    ));
+    match cast.method {
+        'f' => {
+            // Function cast.
+            let func_q = if cast.func_schema == "pg_catalog" || cast.func_schema.is_empty() {
+                quote_ident(&cast.func_name)
+            } else {
+                format!(
+                    "{}.{}",
+                    quote_ident(&cast.func_schema),
+                    quote_ident(&cast.func_name)
+                )
+            };
+            out.push_str(&format!(" WITH FUNCTION {func_q}({}", cast.source_type));
+            out.push(')');
+        }
+        'i' => {
+            out.push_str(" WITH INOUT");
+        }
+        _ => {
+            // Binary compatible.
+            out.push_str(" WITHOUT FUNCTION");
+        }
+    }
+    match cast.context {
+        'i' => out.push_str(" AS IMPLICIT"),
+        'a' => out.push_str(" AS ASSIGNMENT"),
+        _ => {}
+    }
+    out.push_str(";\n");
+}
+
+/// Write a `CREATE COLLATION` statement and `ALTER COLLATION … OWNER TO`.
+pub fn write_create_collation(out: &mut String, col: &CollationInfo) {
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: COLLATION\n--\n\n",
+        col.name
+    ));
+    out.push_str(&format!("CREATE COLLATION {} (", quote_ident(&col.name)));
+    if col.provider == 'i' {
+        // ICU collation.
+        out.push_str(&format!("provider = icu, locale = '{}'", col.locale));
+    } else {
+        // libc collation.
+        if !col.lc_collate.is_empty() {
+            out.push_str(&format!(
+                "lc_collate = '{}', lc_ctype = '{}'",
+                col.lc_collate, col.lc_ctype
+            ));
+        } else {
+            out.push_str(&format!("locale = '{}'", col.locale));
+        }
+    }
+    out.push_str(");\n");
+}
+
+/// Write `ALTER COLLATION … OWNER TO …`.
+pub fn write_alter_collation_owner(out: &mut String, col: &CollationInfo) {
+    out.push_str(&format!(
+        "ALTER COLLATION {} OWNER TO {};\n",
+        quote_ident(&col.name),
+        quote_ident(&col.owner)
+    ));
+}
+
+/// Write `COMMENT ON COLLATION …`.
+pub fn write_comment_on_collation(out: &mut String, col: &CollationInfo) {
+    if let Some(ref comment) = col.comment {
+        let escaped = comment.replace('\'', "''");
+        out.push_str(&format!(
+            "COMMENT ON COLLATION {} IS '{escaped}';\n",
+            quote_ident(&col.name)
+        ));
+    }
+}
+
+/// Write a `CREATE CONVERSION` statement and `ALTER CONVERSION … OWNER TO`.
+pub fn write_create_conversion(out: &mut String, conv: &ConversionInfo) {
+    let qname = format!("{}.{}", quote_ident(&conv.schema), quote_ident(&conv.name));
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: CONVERSION\n--\n\n",
+        conv.name
+    ));
+    let default_kw = if conv.is_default { "DEFAULT " } else { "" };
+    out.push_str(&format!(
+        "CREATE {default_kw}CONVERSION {qname} FOR '{}' TO '{}' FROM {};\n",
+        conv.from_encoding, conv.to_encoding, conv.func_name
+    ));
+}
+
+/// Write `ALTER CONVERSION … OWNER TO …`.
+pub fn write_alter_conversion_owner(out: &mut String, conv: &ConversionInfo) {
+    let qname = format!("{}.{}", quote_ident(&conv.schema), quote_ident(&conv.name));
+    out.push_str(&format!(
+        "ALTER CONVERSION {qname} OWNER TO {};\n",
+        quote_ident(&conv.owner)
+    ));
+}
+
+/// Write `COMMENT ON CONVERSION …`.
+pub fn write_comment_on_conversion(out: &mut String, conv: &ConversionInfo) {
+    if let Some(ref comment) = conv.comment {
+        let qname = format!("{}.{}", quote_ident(&conv.schema), quote_ident(&conv.name));
+        let escaped = comment.replace('\'', "''");
+        out.push_str(&format!("COMMENT ON CONVERSION {qname} IS '{escaped}';\n"));
+    }
+}
+
+/// Write a `CREATE PROCEDURAL LANGUAGE` statement.
+pub fn write_create_language(out: &mut String, lang: &LanguageInfo) {
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: PROCEDURAL LANGUAGE\n--\n\n",
+        lang.name
+    ));
+    let trusted = if lang.trusted { "TRUSTED " } else { "" };
+    let handler_q = if lang.handler_schema == "pg_catalog" || lang.handler_schema.is_empty() {
+        quote_ident(&lang.handler_name)
+    } else {
+        format!(
+            "{}.{}",
+            quote_ident(&lang.handler_schema),
+            quote_ident(&lang.handler_name)
+        )
+    };
+    out.push_str(&format!(
+        "CREATE {trusted}PROCEDURAL LANGUAGE {} HANDLER {};\n",
+        quote_ident(&lang.name),
+        handler_q,
+    ));
+}
+
+/// Write `ALTER PROCEDURAL LANGUAGE … OWNER TO …`.
+pub fn write_alter_language_owner(out: &mut String, lang: &LanguageInfo) {
+    out.push_str(&format!(
+        "ALTER PROCEDURAL LANGUAGE {} OWNER TO {};\n",
+        quote_ident(&lang.name),
+        quote_ident(&lang.owner)
+    ));
+}
+
+/// Write `DROP PROCEDURAL LANGUAGE [IF EXISTS] …` for --clean mode.
+pub fn write_drop_language(out: &mut String, lang: &LanguageInfo, if_exists: bool) {
+    let ie = if if_exists { "IF EXISTS " } else { "" };
+    out.push_str(&format!(
+        "DROP PROCEDURAL LANGUAGE {ie}{};\n",
+        quote_ident(&lang.name)
+    ));
+}
+
+// ── End Issue-53 format functions ──────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

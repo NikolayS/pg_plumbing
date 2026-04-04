@@ -62,9 +62,16 @@ fn alter_role() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted in dump output + needs collation object
 /// ALTER COLLATION test0 OWNER TO appears in full runs, not in no_owner.
-fn alter_collation_owner() {}
+fn alter_collation_owner() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER COLLATION test0 OWNER TO"),
+        "output should contain ALTER COLLATION test0 OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
 /// ALTER FOREIGN DATA WRAPPER dummy OWNER TO.
@@ -130,9 +137,16 @@ fn alter_large_object_owner() {
 }
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted + needs procedural language
 /// ALTER PROCEDURAL LANGUAGE pltestlang OWNER TO.
-fn alter_language_owner() {}
+fn alter_language_owner() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER PROCEDURAL LANGUAGE pltestlang OWNER TO"),
+        "output should contain ALTER PROCEDURAL LANGUAGE pltestlang OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
 /// ALTER SCHEMA dump_test OWNER TO.
@@ -407,14 +421,32 @@ fn alter_foreign_table_owner() {
 }
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted + needs text search config
 /// ALTER TEXT SEARCH CONFIGURATION alt_ts_conf1 OWNER TO.
-fn alter_ts_config_owner() {}
+fn alter_ts_config_owner() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER TEXT SEARCH CONFIGURATION")
+            && stdout.contains("alt_ts_conf1")
+            && stdout.contains("OWNER TO"),
+        "output should contain ALTER TEXT SEARCH CONFIGURATION alt_ts_conf1 OWNER TO:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: OWNER TO not emitted + needs text search dictionary
 /// ALTER TEXT SEARCH DICTIONARY alt_ts_dict1 OWNER TO.
-fn alter_ts_dict_owner() {}
+fn alter_ts_dict_owner() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER TEXT SEARCH DICTIONARY")
+            && stdout.contains("alt_ts_dict1")
+            && stdout.contains("OWNER TO"),
+        "output should contain ALTER TEXT SEARCH DICTIONARY alt_ts_dict1 OWNER TO:\n{stdout}"
+    );
+}
 
 // ---------------------------------------------------------------
 // Module: Large Objects
@@ -532,14 +564,28 @@ fn comment_on_composite_column() {}
 fn comment_on_second_table_columns() {}
 
 #[test]
-#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON CONVERSION dump_test.test_conversion.
-fn comment_on_conversion() {}
+fn comment_on_conversion() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("COMMENT ON CONVERSION") && stdout.contains("test_conversion"),
+        "output should contain COMMENT ON CONVERSION dump_test.test_conversion:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: COMMENT ON not emitted in dump output
 /// COMMENT ON COLLATION test0.
-fn comment_on_collation() {}
+fn comment_on_collation() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("COMMENT ON COLLATION") && stdout.contains("test0"),
+        "output should contain COMMENT ON COLLATION test0:\n{stdout}"
+    );
+}
 
 #[test]
 /// COMMENT ON LARGE OBJECT.
@@ -587,9 +633,16 @@ fn comment_on_publication() {
 fn comment_on_subscription() {}
 
 #[test]
-#[ignore] // not yet implemented: COMMENT ON not emitted + needs text search objects
 /// COMMENT ON TEXT SEARCH CONFIGURATION / DICTIONARY / PARSER / TEMPLATE.
-fn comment_on_text_search_objects() {}
+fn comment_on_text_search_objects() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("COMMENT ON TEXT SEARCH CONFIGURATION") && stdout.contains("alt_ts_conf1"),
+        "output should contain COMMENT ON TEXT SEARCH CONFIGURATION alt_ts_conf1:\n{stdout}"
+    );
+}
 
 #[test]
 /// COMMENT ON TYPE (ENUM, RANGE, Regular, Undefined).
@@ -786,24 +839,64 @@ fn create_database() {}
 fn create_extension_plpgsql() {}
 
 #[test]
-#[ignore] // not yet implemented: CREATE ACCESS METHOD not emitted
 /// CREATE ACCESS METHOD gist2.
-fn create_access_method() {}
+fn create_access_method() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE ACCESS METHOD gist2"),
+        "output should contain CREATE ACCESS METHOD gist2:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("TYPE INDEX"),
+        "gist2 should be an INDEX access method:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: CREATE COLLATION not emitted + needs collation setup
 /// CREATE COLLATION test0 FROM "C".
-fn create_collation() {}
+fn create_collation() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE COLLATION test0"),
+        "output should contain CREATE COLLATION test0:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: CREATE COLLATION not emitted + needs ICU
 /// CREATE COLLATION icu_collation (when ICU is available).
-fn create_collation_icu() {}
+fn create_collation_icu() {
+    crate::common::setup_issue53_schema();
+    if !crate::common::has_icu_collation() {
+        eprintln!("skipping create_collation_icu: ICU collation support not available");
+        return;
+    }
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE COLLATION icu_collation"),
+        "output should contain CREATE COLLATION icu_collation:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("provider = icu"),
+        "icu_collation should use ICU provider:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: CREATE CAST not emitted
 /// CREATE CAST FOR timestamptz.
-fn create_cast() {}
+fn create_cast() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE CAST") && stdout.contains("timestamptz"),
+        "output should contain CREATE CAST (timestamptz AS ...):\n{stdout}"
+    );
+}
 
 // ---------------------------------------------------------------
 // Module: CREATE AGGREGATE / CONVERSION / DOMAIN / FUNCTION /
@@ -811,14 +904,28 @@ fn create_cast() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: CREATE AGGREGATE not emitted + needs dump_test schema
 /// CREATE AGGREGATE dump_test.newavg.
-fn create_aggregate() {}
+fn create_aggregate() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE AGGREGATE") && stdout.contains("newavg"),
+        "output should contain CREATE AGGREGATE dump_test.newavg:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: CREATE CONVERSION not emitted + needs dump_test schema
 /// CREATE CONVERSION dump_test.test_conversion.
-fn create_conversion() {}
+fn create_conversion() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE CONVERSION") && stdout.contains("test_conversion"),
+        "output should contain CREATE CONVERSION dump_test.test_conversion:\n{stdout}"
+    );
+}
 
 #[test]
 #[ignore] // not yet implemented: CREATE DOMAIN not emitted + needs dump_test schema
@@ -826,9 +933,20 @@ fn create_conversion() {}
 fn create_domain() {}
 
 #[test]
-#[ignore] // not yet implemented: CREATE FUNCTION not emitted + needs PL handler
 /// CREATE FUNCTION dump_test.pltestlang_call_handler.
-fn create_function_pltestlang_handler() {}
+fn create_function_pltestlang_handler() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("pltestlang_call_handler"),
+        "output should contain pltestlang_call_handler function:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("language_handler"),
+        "pltestlang_call_handler should return language_handler:\n{stdout}"
+    );
+}
 
 #[test]
 /// CREATE FUNCTION dump_test.trigger_func.
@@ -1006,29 +1124,66 @@ fn create_type_undefined() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: text search objects not emitted in dump
 /// CREATE TEXT SEARCH CONFIGURATION dump_test.alt_ts_conf1.
-fn create_ts_configuration() {}
+fn create_ts_configuration() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TEXT SEARCH CONFIGURATION") && stdout.contains("alt_ts_conf1"),
+        "output should contain CREATE TEXT SEARCH CONFIGURATION dump_test.alt_ts_conf1:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: text search objects not emitted in dump
 /// ALTER TEXT SEARCH CONFIGURATION dump_test.alt_ts_conf1 ... ADD MAPPING.
-fn alter_ts_configuration_mapping() {}
+fn alter_ts_configuration_mapping() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("ALTER TEXT SEARCH CONFIGURATION")
+            && stdout.contains("ADD MAPPING")
+            && stdout.contains("alt_ts_conf1"),
+        "output should contain ALTER TEXT SEARCH CONFIGURATION alt_ts_conf1 ADD MAPPING:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: text search objects not emitted in dump
 /// CREATE TEXT SEARCH TEMPLATE dump_test.alt_ts_temp1.
-fn create_ts_template() {}
+fn create_ts_template() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TEXT SEARCH TEMPLATE") && stdout.contains("alt_ts_temp1"),
+        "output should contain CREATE TEXT SEARCH TEMPLATE dump_test.alt_ts_temp1:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: text search objects not emitted in dump
 /// CREATE TEXT SEARCH PARSER dump_test.alt_ts_prs1.
-fn create_ts_parser() {}
+fn create_ts_parser() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TEXT SEARCH PARSER") && stdout.contains("alt_ts_prs1"),
+        "output should contain CREATE TEXT SEARCH PARSER dump_test.alt_ts_prs1:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: text search objects not emitted in dump
 /// CREATE TEXT SEARCH DICTIONARY dump_test.alt_ts_dict1.
-fn create_ts_dictionary() {}
+fn create_ts_dictionary() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE TEXT SEARCH DICTIONARY") && stdout.contains("alt_ts_dict1"),
+        "output should contain CREATE TEXT SEARCH DICTIONARY dump_test.alt_ts_dict1:\n{stdout}"
+    );
+}
 
 // ---------------------------------------------------------------
 // Module: Foreign data
@@ -1129,9 +1284,18 @@ fn create_transform() {
 }
 
 #[test]
-#[ignore] // not yet implemented: CREATE LANGUAGE not emitted
 /// CREATE LANGUAGE pltestlang.
-fn create_language() {}
+fn create_language() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE")
+            && stdout.contains("PROCEDURAL LANGUAGE")
+            && stdout.contains("pltestlang"),
+        "output should contain CREATE PROCEDURAL LANGUAGE pltestlang:\n{stdout}"
+    );
+}
 
 // ---------------------------------------------------------------
 // Module: Materialized Views
@@ -1620,9 +1784,16 @@ fn drop_tables() {
 }
 
 #[test]
-#[ignore] // not yet implemented: DROP EXTENSION/FUNCTION/LANGUAGE not emitted by --clean
 /// DROP EXTENSION plpgsql / DROP FUNCTION / DROP LANGUAGE pltestlang.
-fn drop_extension_function_language() {}
+fn drop_extension_function_language() {
+    crate::common::setup_issue53_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres", "--clean"]);
+    assert_eq!(code, 0, "pg_dump --clean should succeed");
+    assert!(
+        stdout.contains("DROP PROCEDURAL LANGUAGE") && stdout.contains("pltestlang"),
+        "output should contain DROP PROCEDURAL LANGUAGE pltestlang:\n{stdout}"
+    );
+}
 
 #[test]
 /// DROP IF EXISTS variants for --clean --if-exists runs.
@@ -1773,14 +1944,46 @@ fn revoke_usage_language() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: custom access method not emitted
 /// CREATE ACCESS METHOD regress_test_table_am.
-fn create_access_method_table_am() {}
+/// Skipped when heap_tableam_handler is not available (e.g. official Docker image).
+fn create_access_method_table_am() {
+    crate::common::setup_issue53_schema();
+    if !crate::common::has_regress_table_am() {
+        eprintln!("skipping create_access_method_table_am: heap_tableam_handler not available");
+        return;
+    }
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("CREATE ACCESS METHOD regress_test_table_am"),
+        "output should contain CREATE ACCESS METHOD regress_test_table_am:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("TYPE TABLE"),
+        "regress_test_table_am should be a TABLE access method:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore] // not yet implemented: custom access method not emitted
 /// CREATE TABLE regress_pg_dump_table_am (using custom AM).
-fn create_table_am() {}
+/// Skipped when heap_tableam_handler is not available (e.g. official Docker image).
+fn create_table_am() {
+    crate::common::setup_issue53_schema();
+    if !crate::common::has_regress_table_am() {
+        eprintln!("skipping create_table_am: heap_tableam_handler not available");
+        return;
+    }
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres"]);
+    assert_eq!(code, 0, "pg_dump should succeed");
+    assert!(
+        stdout.contains("regress_pg_dump_table_am"),
+        "output should contain table regress_pg_dump_table_am:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("USING regress_test_table_am"),
+        "regress_pg_dump_table_am should include USING clause:\n{stdout}"
+    );
+}
 
 #[test]
 /// CREATE MATERIALIZED VIEW regress_pg_dump_matview_am (using heap AM).

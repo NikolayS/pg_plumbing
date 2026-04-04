@@ -645,3 +645,190 @@ pub fn setup_issue51_schema() {
         }
     });
 }
+
+/// Set up issue-53 test schema: TS objects, access methods, aggregates,
+/// casts, collations, conversions, and procedural languages.
+/// Uses OnceLock to avoid poisoning.
+pub fn setup_issue53_schema() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        // Ensure dump_test schema exists.
+        setup_dump_test_schema();
+
+        let conninfo = test_conninfo("postgres");
+        let password = std::env::var("PGPASSWORD").unwrap_or_default();
+
+        // Step 1: language handler function + procedural language.
+        let sql1 = "\
+            DROP LANGUAGE IF EXISTS pltestlang CASCADE; \
+            DROP FUNCTION IF EXISTS public.pltestlang_call_handler() CASCADE; \
+            CREATE OR REPLACE FUNCTION public.pltestlang_call_handler() \
+                RETURNS language_handler \
+                LANGUAGE C AS '$libdir/plpgsql', 'plpgsql_call_handler'; \
+            CREATE PROCEDURAL LANGUAGE pltestlang \
+                HANDLER public.pltestlang_call_handler; \
+        ";
+
+        // Step 2: TS template + TS parser + TS dictionary + TS configuration.
+        let sql2 = "\
+            DROP TEXT SEARCH CONFIGURATION IF EXISTS dump_test.alt_ts_conf1 CASCADE; \
+            DROP TEXT SEARCH DICTIONARY IF EXISTS dump_test.alt_ts_dict1 CASCADE; \
+            DROP TEXT SEARCH PARSER IF EXISTS dump_test.alt_ts_prs1 CASCADE; \
+            DROP TEXT SEARCH TEMPLATE IF EXISTS dump_test.alt_ts_temp1 CASCADE; \
+            CREATE TEXT SEARCH TEMPLATE dump_test.alt_ts_temp1 ( \
+                INIT = dsimple_init, \
+                LEXIZE = dsimple_lexize \
+            ); \
+            CREATE TEXT SEARCH PARSER dump_test.alt_ts_prs1 ( \
+                START = prsd_start, \
+                GETTOKEN = prsd_nexttoken, \
+                END = prsd_end, \
+                LEXTYPES = prsd_lextype \
+            ); \
+            CREATE TEXT SEARCH DICTIONARY dump_test.alt_ts_dict1 ( \
+                TEMPLATE = dump_test.alt_ts_temp1 \
+            ); \
+            CREATE TEXT SEARCH CONFIGURATION dump_test.alt_ts_conf1 ( \
+                PARSER = dump_test.alt_ts_prs1 \
+            ); \
+            ALTER TEXT SEARCH CONFIGURATION dump_test.alt_ts_conf1 \
+                ADD MAPPING FOR word WITH dump_test.alt_ts_dict1; \
+            COMMENT ON TEXT SEARCH CONFIGURATION dump_test.alt_ts_conf1 \
+                IS 'test ts config'; \
+        ";
+
+        // Step 3a: INDEX access method (always available).
+        let sql3a = "\
+            DROP ACCESS METHOD IF EXISTS gist2 CASCADE; \
+            CREATE ACCESS METHOD gist2 TYPE INDEX HANDLER gisthandler; \
+        ";
+
+        // Step 3b: TABLE access method — heap_tableam_handler is only available in
+        // full PostgreSQL builds (not the official Docker image). Wrapped in a DO
+        // block so it silently skips when the handler function is missing.
+        let sql3b = "\
+            DO $$ \
+            BEGIN \
+                PERFORM proname FROM pg_proc WHERE proname = 'heap_tableam_handler'; \
+                IF FOUND THEN \
+                    DROP ACCESS METHOD IF EXISTS regress_test_table_am CASCADE; \
+                    DROP TABLE IF EXISTS regress_pg_dump_table_am; \
+                    EXECUTE 'CREATE ACCESS METHOD regress_test_table_am TYPE TABLE HANDLER heap_tableam_handler'; \
+                    EXECUTE 'CREATE TABLE regress_pg_dump_table_am (id int) USING regress_test_table_am'; \
+                END IF; \
+            END \
+            $$; \
+        ";
+
+        // Step 4: aggregate.
+        let sql4 = "\
+            DROP AGGREGATE IF EXISTS dump_test.newavg(numeric) CASCADE; \
+            DROP FUNCTION IF EXISTS dump_test.sfunc1(numeric, numeric) CASCADE; \
+            CREATE OR REPLACE FUNCTION dump_test.sfunc1(numeric, numeric) \
+                RETURNS numeric AS \
+                $$ SELECT $1 + $2 $$ LANGUAGE SQL STRICT IMMUTABLE; \
+            CREATE AGGREGATE dump_test.newavg (numeric) ( \
+                sfunc = dump_test.sfunc1, \
+                stype = numeric, \
+                initcond = '0' \
+            ); \
+        ";
+
+        // Step 5: cast — use timestamptz_out (the output function) directly.
+        let sql5 = "\
+            DROP CAST IF EXISTS (timestamptz AS text); \
+            DROP FUNCTION IF EXISTS dump_test.timestamptz_to_text(timestamptz) CASCADE; \
+            CREATE OR REPLACE FUNCTION dump_test.timestamptz_to_text(timestamptz) \
+                RETURNS text LANGUAGE SQL STRICT IMMUTABLE AS \
+                $$ SELECT to_char($1, 'YYYY-MM-DD HH24:MI:SS.USOF') $$; \
+            CREATE CAST (timestamptz AS text) \
+                WITH FUNCTION dump_test.timestamptz_to_text(timestamptz) \
+                AS ASSIGNMENT; \
+        ";
+
+        // Step 6a: C-based collation (always available).
+        let sql6a = "\
+            DROP COLLATION IF EXISTS test0; \
+            CREATE COLLATION test0 FROM \"C\"; \
+            COMMENT ON COLLATION test0 IS 'test collation'; \
+        ";
+
+        // Step 6b: ICU collation — requires server built with --with-icu.
+        // Run as a separate psql call so failure is non-fatal (we check the exit code
+        // separately and skip rather than assert).
+        let sql6b = "\
+            DROP COLLATION IF EXISTS icu_collation; \
+            CREATE COLLATION icu_collation (LOCALE = 'und', PROVIDER = 'icu'); \
+        ";
+
+        // Step 7: conversion.
+        let sql7 = "\
+            DROP CONVERSION IF EXISTS dump_test.test_conversion; \
+            CREATE CONVERSION dump_test.test_conversion \
+                FOR 'EUC_JP' TO 'UTF8' FROM euc_jp_to_utf8; \
+            COMMENT ON CONVERSION dump_test.test_conversion \
+                IS 'test conversion'; \
+        ";
+
+        // Fatal steps: must succeed.
+        for (step, sql) in [sql1, sql2, sql3a, sql4, sql5, sql6a, sql7]
+            .iter()
+            .enumerate()
+        {
+            let mut cmd = Command::new("psql");
+            cmd.arg(&conninfo).arg("-c").arg(sql);
+            if !password.is_empty() {
+                cmd.env("PGPASSWORD", &password);
+            }
+            let output = cmd.output().expect("psql setup_issue53 failed");
+            assert!(
+                output.status.success(),
+                "setup_issue53_schema step {} failed: {}",
+                step + 1,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        // Non-fatal optional steps: skip silently if the feature is unavailable.
+        for sql in [sql3b, sql6b] {
+            let mut cmd = Command::new("psql");
+            cmd.arg(&conninfo).arg("-c").arg(sql);
+            if !password.is_empty() {
+                cmd.env("PGPASSWORD", &password);
+            }
+            let _ = cmd.output(); // ignore failures
+        }
+    });
+}
+
+/// Returns true if `heap_tableam_handler` is available and the table AM
+/// `regress_test_table_am` was created by setup_issue53_schema.
+pub fn has_regress_table_am() -> bool {
+    let conninfo = test_conninfo("postgres");
+    let password = std::env::var("PGPASSWORD").unwrap_or_default();
+    let sql = "SELECT 1 FROM pg_am WHERE amname = 'regress_test_table_am' AND amtype = 't'";
+    let mut cmd = Command::new("psql");
+    cmd.arg(&conninfo).arg("-Atc").arg(sql);
+    if !password.is_empty() {
+        cmd.env("PGPASSWORD", &password);
+    }
+    let output = cmd.output().expect("psql has_regress_table_am failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.trim() == "1"
+}
+
+/// Returns true if ICU collation support is compiled in (icu_collation exists after setup).
+pub fn has_icu_collation() -> bool {
+    let conninfo = test_conninfo("postgres");
+    let password = std::env::var("PGPASSWORD").unwrap_or_default();
+    let sql = "SELECT 1 FROM pg_collation WHERE collname = 'icu_collation'";
+    let mut cmd = Command::new("psql");
+    cmd.arg(&conninfo).arg("-Atc").arg(sql);
+    if !password.is_empty() {
+        cmd.env("PGPASSWORD", &password);
+    }
+    let output = cmd.output().expect("psql has_icu_collation failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.trim() == "1"
+}
