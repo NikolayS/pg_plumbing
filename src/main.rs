@@ -5,7 +5,7 @@
 
 use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
-use pg_plumbing::{dump, restore};
+use pg_plumbing::{build_conninfo, dump, restore};
 
 /// pg_dump/pg_restore rewritten in Rust.
 #[derive(Parser, Debug)]
@@ -168,8 +168,10 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
         .or(args.database.as_deref())
         .unwrap_or("postgres");
 
+    let conninfo = build_conninfo(dbname);
     let opts = dump::DumpOptions {
         dbname: dbname.to_string(),
+        conninfo,
         tables: args.table,
         schema_only: args.schema_only,
         data_only: args.data_only,
@@ -234,8 +236,10 @@ async fn run_pg_restore(args: PgRestoreArgs) -> Result<()> {
         None => bail!("pg_restore: no input file specified"),
     };
 
+    let conninfo = build_conninfo(&dbname);
     let opts = restore::RestoreOptions {
-        dbname,
+        dbname: dbname.clone(),
+        conninfo,
         clean: args.clean,
         if_exists: args.if_exists,
         jobs: args.jobs.unwrap_or(1).max(1),
