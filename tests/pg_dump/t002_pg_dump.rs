@@ -1077,14 +1077,44 @@ fn create_table_part() {}
 fn run_binary_upgrade() {}
 
 #[test]
-#[ignore]
 /// clean: pg_dump --clean produces DROP + CREATE statements.
-fn run_clean() {}
+fn run_clean() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) =
+        crate::common::run_pg_dump(&["-t", "dump_test_simple", "-d", "postgres", "--clean"]);
+    assert_eq!(code, 0, "pg_dump --clean should succeed");
+    assert!(
+        stdout.contains("DROP TABLE"),
+        "output should contain DROP TABLE:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("CREATE TABLE"),
+        "output should contain CREATE TABLE:\n{stdout}"
+    );
+}
 
 #[test]
-#[ignore]
 /// clean_if_exists: pg_dump --clean --if-exists produces DROP IF EXISTS.
-fn run_clean_if_exists() {}
+fn run_clean_if_exists() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&[
+        "-t",
+        "dump_test_simple",
+        "-d",
+        "postgres",
+        "--clean",
+        "--if-exists",
+    ]);
+    assert_eq!(code, 0, "pg_dump --clean --if-exists should succeed");
+    assert!(
+        stdout.contains("DROP TABLE IF EXISTS"),
+        "output should contain DROP TABLE IF EXISTS:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("CREATE TABLE"),
+        "output should contain CREATE TABLE:\n{stdout}"
+    );
+}
 
 #[test]
 /// column_inserts: pg_dump --data-only --column-inserts.
@@ -1115,9 +1145,20 @@ fn run_column_inserts() {
 }
 
 #[test]
-#[ignore]
 /// createdb: pg_dump --create produces CREATE DATABASE.
-fn run_createdb() {}
+fn run_createdb() {
+    crate::common::setup_test_schema();
+    let (stdout, _stderr, code) = crate::common::run_pg_dump(&["-d", "postgres", "--create"]);
+    assert_eq!(code, 0, "pg_dump --create should succeed");
+    assert!(
+        stdout.contains("CREATE DATABASE"),
+        "output should contain CREATE DATABASE:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\\connect"),
+        "output should contain \\connect:\n{stdout}"
+    );
+}
 
 #[test]
 /// data_only: pg_dump --data-only outputs only COPY, no CREATE TABLE.

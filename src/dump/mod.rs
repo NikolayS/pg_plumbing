@@ -41,6 +41,12 @@ pub struct DumpOptions {
     pub no_privileges: bool,
     /// Number of parallel dump workers (1 = sequential).
     pub jobs: usize,
+    /// Prepend DROP statements before CREATE statements.
+    pub clean: bool,
+    /// Use DROP ... IF EXISTS (only meaningful with clean).
+    pub if_exists: bool,
+    /// Include CREATE DATABASE + \connect at the start.
+    pub create_db: bool,
 }
 
 /// Dump a database in plain SQL format.
@@ -67,6 +73,13 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
     out.push_str("-- PostgreSQL database dump\n");
     out.push_str("--\n\n");
 
+    // --create: emit CREATE DATABASE + \connect before SET commands
+    if opts.create_db {
+        let dbname = &opts.dbname;
+        out.push_str(&format!("CREATE DATABASE \"{dbname}\";\n"));
+        out.push_str(&format!("\\connect {dbname}\n\n"));
+    }
+
     out.push_str("SET statement_timeout = 0;\n");
     out.push_str("SET lock_timeout = 0;\n");
     out.push_str("SET idle_in_transaction_session_timeout = 0;\n");
@@ -80,6 +93,15 @@ pub async fn dump_plain(opts: &DumpOptions) -> Result<String> {
 
     for table in &tables {
         if !opts.data_only {
+            // --clean: emit DROP statement before each CREATE TABLE
+            if opts.clean {
+                let qname = table.qualified_name();
+                if opts.if_exists {
+                    out.push_str(&format!("DROP TABLE IF EXISTS {qname} CASCADE;\n"));
+                } else {
+                    out.push_str(&format!("DROP TABLE {qname} CASCADE;\n"));
+                }
+            }
             format::write_create_table(&mut out, table);
             out.push('\n');
         }

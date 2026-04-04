@@ -22,6 +22,8 @@ pub struct RestoreOptions {
     pub dbname: String,
     /// Drop objects before recreating them.
     pub clean: bool,
+    /// Use DROP ... IF EXISTS (only meaningful with clean).
+    pub if_exists: bool,
     /// Number of parallel restore workers (1 = sequential).
     pub jobs: usize,
 }
@@ -280,7 +282,7 @@ pub async fn restore_custom(data: &[u8], opts: &RestoreOptions) -> Result<()> {
     if opts.clean {
         // Generate and execute DROP statements from schema DDL.
         for ddl in &schema_ddls {
-            let drops = generate_drop_statements(ddl);
+            let drops = generate_drop_statements(ddl, opts.if_exists);
             if !drops.trim().is_empty() {
                 let _ = client.batch_execute(&drops).await; // ignore errors (table may not exist)
             }
@@ -351,7 +353,7 @@ pub async fn restore_plain(sql: &str, opts: &RestoreOptions) -> Result<()> {
     });
 
     if opts.clean {
-        let drop_stmts = generate_drop_statements(sql);
+        let drop_stmts = generate_drop_statements(sql, opts.if_exists);
         if !drop_stmts.is_empty() {
             client
                 .batch_execute(&drop_stmts)
@@ -440,22 +442,31 @@ fn parse_sql_segments(sql: &str) -> Vec<SqlSegment> {
     segments
 }
 
-/// Generate DROP IF EXISTS statements for objects found in the dump SQL.
+/// Generate DROP statements for objects found in the dump SQL.
 ///
 /// Scans for `CREATE TABLE` and `CREATE SEQUENCE` statements and
-/// produces corresponding `DROP ... IF EXISTS ... CASCADE;` statements.
-fn generate_drop_statements(sql: &str) -> String {
+/// produces corresponding `DROP ... CASCADE;` statements.
+/// When `if_exists` is true, uses `DROP ... IF EXISTS ... CASCADE;`.
+fn generate_drop_statements(sql: &str, if_exists: bool) -> String {
     let mut drops = String::new();
 
     for line in sql.lines() {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("CREATE TABLE ") {
             if let Some(name) = rest.split(&['(', ' '][..]).next() {
-                drops.push_str(&format!("DROP TABLE IF EXISTS {name} CASCADE;\n"));
+                if if_exists {
+                    drops.push_str(&format!("DROP TABLE IF EXISTS {name} CASCADE;\n"));
+                } else {
+                    drops.push_str(&format!("DROP TABLE {name} CASCADE;\n"));
+                }
             }
         } else if let Some(rest) = trimmed.strip_prefix("CREATE SEQUENCE ") {
             if let Some(name) = rest.split(&[' ', ';'][..]).next() {
-                drops.push_str(&format!("DROP SEQUENCE IF EXISTS {name} CASCADE;\n"));
+                if if_exists {
+                    drops.push_str(&format!("DROP SEQUENCE IF EXISTS {name} CASCADE;\n"));
+                } else {
+                    drops.push_str(&format!("DROP SEQUENCE {name} CASCADE;\n"));
+                }
             }
         }
     }
@@ -501,16 +512,29 @@ CREATE TABLE public.foo (id integer);
 CREATE TABLE public.bar (name text);
 CREATE SEQUENCE public.foo_id_seq;
 ";
-        let drops = generate_drop_statements(sql);
+        let drops = generate_drop_statements(sql, true);
         assert!(drops.contains("DROP TABLE IF EXISTS public.foo CASCADE;"));
         assert!(drops.contains("DROP TABLE IF EXISTS public.bar CASCADE;"));
         assert!(drops.contains("DROP SEQUENCE IF EXISTS public.foo_id_seq CASCADE;"));
     }
 
     #[test]
+    fn generate_drops_without_if_exists() {
+        let sql = "\
+CREATE TABLE public.foo (id integer);
+CREATE SEQUENCE public.foo_id_seq;
+";
+        let drops = generate_drop_statements(sql, false);
+        assert!(drops.contains("DROP TABLE public.foo CASCADE;"));
+        assert!(!drops.contains("DROP TABLE IF EXISTS"));
+        assert!(drops.contains("DROP SEQUENCE public.foo_id_seq CASCADE;"));
+        assert!(!drops.contains("DROP SEQUENCE IF EXISTS"));
+    }
+
+    #[test]
     fn generate_drops_empty_for_comments() {
         let sql = "-- just a comment\nSET x = 1;\n";
-        let drops = generate_drop_statements(sql);
+        let drops = generate_drop_statements(sql, true);
         assert!(drops.is_empty());
     }
 }

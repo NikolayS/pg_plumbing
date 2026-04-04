@@ -87,6 +87,14 @@ struct Cli {
     /// Add ON CONFLICT DO NOTHING to INSERT commands
     #[arg(long = "on-conflict-do-nothing")]
     on_conflict_do_nothing: bool,
+
+    /// Dump only tables matching pattern (can be specified multiple times)
+    #[arg(short = 't', long = "table")]
+    table: Vec<String>,
+
+    /// Include CREATE DATABASE + \connect in the output
+    #[arg(short = 'C', long = "create")]
+    create: bool,
 }
 
 /// Build the version string: `pg_dump (pg_plumbing) <version>`.
@@ -250,7 +258,7 @@ fn main() {
 
     let opts = dump::DumpOptions {
         dbname,
-        tables: Vec::new(), // TODO: -t flag not yet plumbed in pg_dump binary
+        tables: cli.table.clone(),
         schema_only: cli.schema_only,
         data_only: cli.data_only,
         inserts: cli.inserts || cli.column_inserts || cli.rows_per_insert.is_some(),
@@ -267,6 +275,9 @@ fn main() {
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(1)
             .max(1),
+        clean: cli.clean,
+        if_exists: cli.if_exists,
+        create_db: cli.create,
     };
 
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");

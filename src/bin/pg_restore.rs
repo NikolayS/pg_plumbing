@@ -256,6 +256,7 @@ fn main() {
     let opts = restore::RestoreOptions {
         dbname,
         clean: cli.clean,
+        if_exists: cli.if_exists,
         jobs,
     };
 
