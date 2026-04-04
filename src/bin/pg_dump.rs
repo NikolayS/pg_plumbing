@@ -5,6 +5,7 @@
 
 use clap::Parser;
 use pg_plumbing::dump;
+use pg_plumbing::ConnParams;
 
 /// pg_dump dumps a database as a text file or to other formats.
 ///
@@ -13,9 +14,16 @@ use pg_plumbing::dump;
 #[command(
     name = "pg_dump",
     version = pg_dump_version(),
-    about = "pg_dump dumps a database as a text file or to other formats."
+    about = "pg_dump dumps a database as a text file or to other formats.",
+    // Disable clap's automatic -h/--help short flag so that -h can be
+    // used for --host (matching PostgreSQL's pg_dump interface).
+    // --help still works via the long flag.
+    disable_help_flag = true,
 )]
 struct Cli {
+    /// Print help information
+    #[arg(long = "help", action = clap::ArgAction::Help)]
+    help: (),
     /// Database name to dump (positional, alternative to -d)
     #[arg()]
     dbname: Vec<String>,
@@ -119,6 +127,23 @@ struct Cli {
     /// Do not output commands to set privileges (GRANT/REVOKE)
     #[arg(short = 'x', long = "no-acl", alias = "no-privileges")]
     no_acl: bool,
+
+    // ---- Connection options ----
+    /// Database server host or socket directory (overrides PGHOST)
+    #[arg(short = 'h', long = "host")]
+    host: Option<String>,
+
+    /// Database server port (overrides PGPORT)
+    #[arg(short = 'p', long = "port")]
+    port: Option<String>,
+
+    /// Connect as the specified database user (overrides PGUSER)
+    #[arg(short = 'U', long = "username")]
+    username: Option<String>,
+
+    /// Force password prompt (password may also be supplied via PGPASSWORD)
+    #[arg(short = 'W', long = "password")]
+    password: Option<String>,
 }
 
 /// Build the version string: `pg_dump (pg_plumbing) <version>`.
@@ -280,8 +305,19 @@ fn main() {
             .unwrap_or_else(|| "postgres".to_string())
     };
 
+    // Build connection params from CLI flags (they override env vars inside
+    // build_conninfo_with_params).
+    let conn_params = ConnParams {
+        host: cli.host.clone(),
+        port: cli.port.clone(),
+        user: cli.username.clone(),
+        password: cli.password.clone(),
+    };
+    // Resolve the final conninfo now so DumpOptions carries it.
+    let conninfo = pg_plumbing::build_conninfo_with_params(&dbname, &conn_params);
+
     let opts = dump::DumpOptions {
-        dbname,
+        dbname: conninfo,
         tables: cli.table.clone(),
         schema_only: cli.schema_only,
         data_only: cli.data_only,

@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // RED — not yet implemented
+#[ignore] // requires LATIN1-encoded database (not available in standard CI which uses UTF8)
 /// pg_dumpall --roles-only works with database/user names containing
 /// ASCII characters 1-54 (control chars, punctuation, digits).
 ///
@@ -22,26 +22,28 @@
 fn pg_dumpall_connstr_ascii_range_1() {}
 
 #[test]
-#[ignore]
+#[ignore] // requires LATIN1-encoded database (not available in standard CI which uses UTF8)
 /// pg_dumpall --roles-only with ASCII characters 55-149.
 /// Uses dbname2/username3.
 fn pg_dumpall_connstr_ascii_range_2() {}
 
 #[test]
-#[ignore]
+#[ignore] // requires LATIN1-encoded database (not available in standard CI which uses UTF8)
 /// pg_dumpall --roles-only with LATIN1 characters 150-202.
 /// Uses dbname3/username2.
 fn pg_dumpall_connstr_ascii_range_3() {}
 
 #[test]
-#[ignore]
+#[ignore] // requires LATIN1-encoded database (not available in standard CI which uses UTF8)
 /// pg_dumpall --roles-only with LATIN1 characters 203-255.
 /// Uses dbname4/username1.
 fn pg_dumpall_connstr_ascii_range_4() {}
 
 #[test]
-#[ignore]
+#[ignore] // requires pg_dumpall implementation (not yet implemented in pg_plumbing)
 /// pg_dumpall --dbname accepts a connection string (dbname=template1).
+/// The build_conninfo() URI/key=value pass-through is verified by unit tests
+/// in src/lib.rs (conninfo_uri_passthrough, conninfo_keyvalue_passthrough).
 fn pg_dumpall_connstr_dbname_accepts_connstring() {}
 
 // ---------------------------------------------------------------
@@ -49,19 +51,19 @@ fn pg_dumpall_connstr_dbname_accepts_connstring() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // requires LATIN1-encoded database (not available in standard CI which uses UTF8)
 /// Parallel pg_dump (--format=directory --jobs=2) works with
 /// special-character database names.
 fn parallel_dump_special_chars() {}
 
 #[test]
-#[ignore]
+#[ignore] // requires LATIN1-encoded database (not available in standard CI which uses UTF8)
 /// Parallel pg_restore (--jobs=2) into template1 works with
 /// special-character user/database names.
 fn parallel_restore_special_chars() {}
 
 #[test]
-#[ignore]
+#[ignore] // requires LATIN1-encoded database (not available in standard CI which uses UTF8)
 /// Parallel pg_restore with --create flag recreates the database
 /// using the original special-character name.
 fn parallel_restore_with_create() {}
@@ -71,19 +73,19 @@ fn parallel_restore_with_create() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
+#[ignore] // requires LATIN1-encoded database (not available in standard CI which uses UTF8)
 /// pg_dumpall full dump succeeds with special-character names.
 fn full_dump_special_chars() {}
 
 #[test]
-#[ignore]
+#[ignore] // requires pg_dumpall implementation + LATIN1-encoded database (not available in standard CI)
 /// Restore full dump via psql using environment variables
 /// (PGPORT, PGUSER) for connection parameters.
 /// Verifies no errors on stderr.
 fn restore_via_psql_env_vars() {}
 
 #[test]
-#[ignore]
+#[ignore] // requires pg_dumpall implementation + LATIN1-encoded database (not available in standard CI)
 /// Restore full dump via psql using command-line options
 /// (--port, --username) for connection parameters.
 /// Verifies no errors on stderr.
