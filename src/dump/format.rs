@@ -69,8 +69,7 @@ pub fn write_create_table(out: &mut String, table: &TableInfo, opts: &DumpOption
     let total_items = table.columns.len() + inline_checks.len();
     for (i, col) in table.columns.iter().enumerate() {
         out.push_str(&format!("    {} {}", quote_ident(&col.name), col.type_name));
-        if col.not_null && col.identity.is_none() {
-            // Identity columns: NOT NULL is implied, real pg_dump omits it from the column def.
+        if col.not_null {
             out.push_str(" NOT NULL");
         }
         if let Some(ref expr) = col.generated_expr {
