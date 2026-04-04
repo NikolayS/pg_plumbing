@@ -754,6 +754,455 @@ pub async fn get_comments(client: &Client, _opts: &DumpOptions) -> Result<Vec<Co
     Ok(comments)
 }
 
+/// Metadata for a materialized view.
+#[derive(Debug, Clone)]
+pub struct MatviewInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Materialized view name.
+    pub name: String,
+    /// View definition from `pg_get_viewdef`.
+    pub definition: String,
+    /// Owner role name.
+    pub owner: String,
+    /// Whether it has been populated (can be refreshed).
+    pub is_populated: bool,
+}
+
+impl MatviewInfo {
+    /// Fully qualified name: `schema.name`.
+    pub fn qualified_name(&self) -> String {
+        format!("{}.{}", quote_ident(&self.schema), quote_ident(&self.name))
+    }
+}
+
+/// Metadata for a function or procedure.
+#[derive(Debug, Clone)]
+pub struct FunctionInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Function/procedure name.
+    pub name: String,
+    /// Full DDL from pg_get_functiondef.
+    pub definition: String,
+    /// 'f' = function, 'p' = procedure, 'a' = aggregate, 'w' = window.
+    pub prokind: char,
+}
+
+impl FunctionInfo {
+    pub fn qualified_name(&self) -> String {
+        format!("{}.{}", quote_ident(&self.schema), quote_ident(&self.name))
+    }
+}
+
+/// Metadata for a trigger.
+#[derive(Debug, Clone)]
+pub struct TriggerInfo {
+    /// Schema of the table the trigger is on.
+    pub schema: String,
+    /// Table name the trigger is on.
+    pub table_name: String,
+    /// Trigger name.
+    pub name: String,
+    /// Full trigger DDL from pg_get_triggerdef.
+    pub definition: String,
+    /// tgenabled: 'O'=enabled, 'D'=disabled, 'R'=replica, 'A'=always.
+    pub enabled: char,
+    /// Whether this is an internal (constraint) trigger.
+    pub is_internal: bool,
+}
+
+/// Metadata for an event trigger.
+#[derive(Debug, Clone)]
+pub struct EventTriggerInfo {
+    /// Event trigger name.
+    pub name: String,
+    /// Event (e.g. 'ddl_command_start').
+    pub event: String,
+    /// Function name.
+    pub func_name: String,
+    /// Function schema.
+    pub func_schema: String,
+    /// enabled: 'O'=enabled, 'D'=disabled, 'R'=replica, 'A'=always.
+    pub enabled: char,
+    /// Tag filter (comma-separated), or empty.
+    pub tags: String,
+}
+
+/// Metadata for extended statistics.
+#[derive(Debug, Clone)]
+pub struct ExtendedStatInfo {
+    /// Schema name.
+    pub schema: String,
+    /// Statistics object name.
+    pub name: String,
+    /// DDL from pg_get_statisticsobjdef.
+    pub definition: String,
+    /// Statistics target (-1 = default).
+    pub stattarget: i16,
+}
+
+/// Metadata for a CREATE TRANSFORM.
+#[derive(Debug, Clone)]
+pub struct TransformInfo {
+    /// Type name (e.g. `integer`).
+    pub type_name: String,
+    /// Language name (e.g. `plpythonu`).
+    pub lang_name: String,
+    /// FROM SQL function name (or empty).
+    pub fromsql: String,
+    /// TO SQL function name (or empty).
+    pub tosql: String,
+}
+
+/// Metadata for a type comment.
+#[derive(Debug, Clone)]
+pub struct TypeCommentInfo {
+    /// Type name (qualified).
+    pub type_name: String,
+    /// Comment text.
+    pub comment: String,
+}
+
+/// Query user-defined materialized views from the catalog.
+pub async fn get_matviews(client: &Client, opts: &DumpOptions) -> Result<Vec<MatviewInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname AS schema_name,
+                    c.relname AS view_name,
+                    r.rolname AS owner,
+                    c.relispopulated AS is_populated,
+                    pg_catalog.pg_get_viewdef(c.oid, true) AS definition
+             FROM pg_catalog.pg_class c
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             JOIN pg_catalog.pg_roles r ON r.oid = c.relowner
+             WHERE c.relkind = 'm'
+               AND n.nspname != all($1)
+             ORDER BY n.nspname, c.relname",
+            &[&excluded],
+        )
+        .await
+        .context("query materialized views")?;
+
+    let mut matviews = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("schema_name");
+
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+
+        let definition: Option<String> = row.get("definition");
+        matviews.push(MatviewInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("view_name").to_string(),
+            owner: row.get::<_, &str>("owner").to_string(),
+            is_populated: row.get("is_populated"),
+            definition: definition.unwrap_or_default(),
+        });
+    }
+
+    Ok(matviews)
+}
+
+/// Query user-defined functions and procedures from the catalog.
+///
+/// Excludes aggregates, window functions, and functions in system schemas.
+/// Only returns regular functions ('f') and procedures ('p').
+pub async fn get_functions(client: &Client, opts: &DumpOptions) -> Result<Vec<FunctionInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname AS schema_name,
+                    p.proname AS func_name,
+                    p.prokind::text AS prokind,
+                    pg_catalog.pg_get_functiondef(p.oid) AS definition
+             FROM pg_catalog.pg_proc p
+             JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+             WHERE p.prokind IN ('f', 'p')
+               AND n.nspname != all($1)
+             ORDER BY n.nspname, p.proname",
+            &[&excluded],
+        )
+        .await
+        .context("query functions")?;
+
+    let mut functions = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("schema_name");
+
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+
+        let prokind_str: &str = row.get("prokind");
+        let prokind = prokind_str.chars().next().unwrap_or('f');
+        let definition: Option<String> = row.get("definition");
+
+        functions.push(FunctionInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("func_name").to_string(),
+            definition: definition.unwrap_or_default(),
+            prokind,
+        });
+    }
+
+    Ok(functions)
+}
+
+/// Query user-defined triggers (non-internal) from the catalog.
+pub async fn get_triggers(client: &Client, opts: &DumpOptions) -> Result<Vec<TriggerInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname AS schema_name,
+                    c.relname AS table_name,
+                    t.tgname AS trigger_name,
+                    t.tgenabled::text AS enabled,
+                    t.tgisinternal AS is_internal,
+                    pg_catalog.pg_get_triggerdef(t.oid, true) AS definition
+             FROM pg_catalog.pg_trigger t
+             JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             WHERE NOT t.tgisinternal
+               AND n.nspname != all($1)
+             ORDER BY n.nspname, c.relname, t.tgname",
+            &[&excluded],
+        )
+        .await
+        .context("query triggers")?;
+
+    let mut triggers = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("schema_name");
+
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+
+        let enabled_str: &str = row.get("enabled");
+        let enabled = enabled_str.chars().next().unwrap_or('O');
+
+        triggers.push(TriggerInfo {
+            schema: schema.to_string(),
+            table_name: row.get::<_, &str>("table_name").to_string(),
+            name: row.get::<_, &str>("trigger_name").to_string(),
+            definition: row.get::<_, &str>("definition").to_string(),
+            enabled,
+            is_internal: row.get("is_internal"),
+        });
+    }
+
+    Ok(triggers)
+}
+
+/// Query event triggers from the catalog.
+pub async fn get_event_triggers(client: &Client) -> Result<Vec<EventTriggerInfo>> {
+    let rows = client
+        .query(
+            "SELECT et.evtname AS name,
+                    et.evtevent AS event,
+                    et.evtenabled::text AS enabled,
+                    n.nspname AS func_schema,
+                    p.proname AS func_name,
+                    COALESCE(array_to_string(et.evttags, ', '), '') AS tags
+             FROM pg_catalog.pg_event_trigger et
+             JOIN pg_catalog.pg_proc p ON p.oid = et.evtfoid
+             JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+             ORDER BY et.evtname",
+            &[],
+        )
+        .await
+        .context("query event triggers")?;
+
+    let mut event_triggers = Vec::new();
+    for row in &rows {
+        let enabled_str: &str = row.get("enabled");
+        let enabled = enabled_str.chars().next().unwrap_or('O');
+
+        event_triggers.push(EventTriggerInfo {
+            name: row.get::<_, &str>("name").to_string(),
+            event: row.get::<_, &str>("event").to_string(),
+            func_schema: row.get::<_, &str>("func_schema").to_string(),
+            func_name: row.get::<_, &str>("func_name").to_string(),
+            enabled,
+            tags: row.get::<_, &str>("tags").to_string(),
+        });
+    }
+
+    Ok(event_triggers)
+}
+
+/// Query extended statistics objects from the catalog.
+pub async fn get_extended_statistics(
+    client: &Client,
+    opts: &DumpOptions,
+) -> Result<Vec<ExtendedStatInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT n.nspname AS schema_name,
+                    s.stxname AS stat_name,
+                    pg_catalog.pg_get_statisticsobjdef(s.oid) AS definition,
+                    s.stxstattarget AS stattarget
+             FROM pg_catalog.pg_statistic_ext s
+             JOIN pg_catalog.pg_namespace n ON n.oid = s.stxnamespace
+             WHERE n.nspname != all($1)
+             ORDER BY n.nspname, s.stxname",
+            &[&excluded],
+        )
+        .await
+        .context("query extended statistics")?;
+
+    let mut stats = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("schema_name");
+
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+
+        let definition: Option<String> = row.get("definition");
+        stats.push(ExtendedStatInfo {
+            schema: schema.to_string(),
+            name: row.get::<_, &str>("stat_name").to_string(),
+            definition: definition.unwrap_or_default(),
+            stattarget: row.get("stattarget"),
+        });
+    }
+
+    Ok(stats)
+}
+
+/// Query transforms from the catalog.
+pub async fn get_transforms(client: &Client) -> Result<Vec<TransformInfo>> {
+    let rows = client
+        .query(
+            "SELECT pg_catalog.format_type(t.trftype, NULL) AS type_name,
+                    l.lanname AS lang_name,
+                    COALESCE((SELECT n.nspname || '.' || p.proname
+                              FROM pg_catalog.pg_proc p
+                              JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+                              WHERE p.oid = t.trffromsql), '') AS fromsql,
+                    COALESCE((SELECT n.nspname || '.' || p.proname
+                              FROM pg_catalog.pg_proc p
+                              JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+                              WHERE p.oid = t.trftosql), '') AS tosql
+             FROM pg_catalog.pg_transform t
+             JOIN pg_catalog.pg_language l ON l.oid = t.trflang
+             ORDER BY type_name, lang_name",
+            &[],
+        )
+        .await
+        .context("query transforms")?;
+
+    let mut transforms = Vec::new();
+    for row in &rows {
+        transforms.push(TransformInfo {
+            type_name: row.get::<_, &str>("type_name").to_string(),
+            lang_name: row.get::<_, &str>("lang_name").to_string(),
+            fromsql: row.get::<_, &str>("fromsql").to_string(),
+            tosql: row.get::<_, &str>("tosql").to_string(),
+        });
+    }
+
+    Ok(transforms)
+}
+
+/// Query comments on type objects (ENUM, RANGE, composite, base types, domains).
+pub async fn get_type_comments(
+    client: &Client,
+    opts: &DumpOptions,
+) -> Result<Vec<TypeCommentInfo>> {
+    let mut excluded = vec!["pg_catalog".to_string(), "information_schema".to_string()];
+    let literal_excludes: Vec<String> = opts
+        .exclude_schemas
+        .iter()
+        .filter(|p| !p.contains(['*', '?']))
+        .cloned()
+        .collect();
+    excluded.extend(literal_excludes);
+
+    let rows = client
+        .query(
+            "SELECT format('%I.%I', n.nspname, t.typname) AS type_name,
+                    n.nspname,
+                    d.description
+             FROM pg_catalog.pg_type t
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+             JOIN pg_catalog.pg_description d ON d.objoid = t.oid
+               AND d.classoid = 'pg_catalog.pg_type'::regclass
+             WHERE n.nspname != all($1)
+               AND t.typtype IN ('e', 'r', 'c', 'b', 'd', 'p')
+             ORDER BY n.nspname, t.typname",
+            &[&excluded],
+        )
+        .await
+        .context("query type comments")?;
+
+    let mut comments = Vec::new();
+    for row in &rows {
+        let schema: &str = row.get("nspname");
+        if !opts.schemas.is_empty() && !super::filter::schema_matches_any(&opts.schemas, schema) {
+            continue;
+        }
+        if super::filter::schema_matches_any(&opts.exclude_schemas, schema) {
+            continue;
+        }
+        comments.push(TypeCommentInfo {
+            type_name: row.get::<_, &str>("type_name").to_string(),
+            comment: row.get::<_, &str>("description").to_string(),
+        });
+    }
+
+    Ok(comments)
+}
+
 /// Quote an SQL identifier if it needs quoting.
 pub fn quote_ident(name: &str) -> String {
     // Simple heuristic: quote if not all lowercase alphanumeric/underscore,

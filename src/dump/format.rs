@@ -7,7 +7,9 @@ use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
 use super::catalog::{
-    quote_ident, ConstraintInfo, PrivilegeInfo, SchemaInfo, SequenceInfo, TableInfo, ViewInfo,
+    quote_ident, ConstraintInfo, EventTriggerInfo, ExtendedStatInfo, FunctionInfo, MatviewInfo,
+    PrivilegeInfo, SchemaInfo, SequenceInfo, TableInfo, TransformInfo, TriggerInfo,
+    TypeCommentInfo, ViewInfo,
 };
 use super::DumpOptions;
 
@@ -470,6 +472,165 @@ fn format_insert_value(row: &tokio_postgres::Row, idx: usize) -> String {
         }
     } else {
         "NULL".to_string()
+    }
+}
+
+/// Write a `CREATE MATERIALIZED VIEW` statement + `REFRESH MATERIALIZED VIEW`.
+pub fn write_create_matview(out: &mut String, mv: &MatviewInfo) {
+    let qname = mv.qualified_name();
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: MATERIALIZED VIEW\n--\n\n",
+        mv.name
+    ));
+    out.push_str(&format!("CREATE MATERIALIZED VIEW {qname} AS\n"));
+    let def = mv.definition.trim_end();
+    out.push_str(def);
+    if !def.ends_with(';') {
+        out.push(';');
+    }
+    out.push('\n');
+}
+
+/// Write `ALTER MATERIALIZED VIEW … OWNER TO …`.
+pub fn write_alter_matview_owner(out: &mut String, mv: &MatviewInfo) {
+    let qname = mv.qualified_name();
+    out.push_str(&format!(
+        "ALTER MATERIALIZED VIEW {qname} OWNER TO {};\n",
+        quote_ident(&mv.owner)
+    ));
+}
+
+/// Write `REFRESH MATERIALIZED VIEW` for populated matviews.
+pub fn write_refresh_matview(out: &mut String, mv: &MatviewInfo) {
+    if mv.is_populated {
+        let qname = mv.qualified_name();
+        out.push_str(&format!("REFRESH MATERIALIZED VIEW {qname};\n"));
+    }
+}
+
+/// Write a function or procedure DDL (from pg_get_functiondef).
+pub fn write_create_function(out: &mut String, func: &FunctionInfo) {
+    let kind = if func.prokind == 'p' {
+        "PROCEDURE"
+    } else {
+        "FUNCTION"
+    };
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: {}\n--\n\n",
+        func.name, kind
+    ));
+    let def = func.definition.trim_end();
+    out.push_str(def);
+    if !def.ends_with(';') {
+        out.push(';');
+    }
+    out.push('\n');
+}
+
+/// Write a trigger DDL.
+///
+/// Note: DISABLE TRIGGER is NOT emitted here — it is handled separately
+/// by `write_disable_trigger_all` in the mod.rs pipeline, after all triggers
+/// for a table have been emitted.
+pub fn write_create_trigger(out: &mut String, trig: &TriggerInfo) {
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: TRIGGER\n--\n\n",
+        trig.name
+    ));
+    let def = trig.definition.trim_end();
+    out.push_str(def);
+    if !def.ends_with(';') {
+        out.push(';');
+    }
+    out.push('\n');
+}
+
+/// Write ALTER TABLE ... DISABLE TRIGGER ALL for tables that have all triggers disabled.
+///
+/// This is emitted once per table when tgenabled='D' for all triggers on that table.
+pub fn write_disable_trigger_all(out: &mut String, schema: &str, table: &str) {
+    let table_qname = format!("{}.{}", quote_ident(schema), quote_ident(table));
+    out.push_str(&format!(
+        "\n--\n-- Name: {table}; Type: TABLE TRIGGER DISABLE\n--\n\nALTER TABLE {table_qname} DISABLE TRIGGER ALL;\n"
+    ));
+}
+
+/// Write a CREATE EVENT TRIGGER statement.
+pub fn write_create_event_trigger(out: &mut String, et: &EventTriggerInfo) {
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: EVENT TRIGGER\n--\n\n",
+        et.name
+    ));
+    let func_qname = format!(
+        "{}.{}",
+        quote_ident(&et.func_schema),
+        quote_ident(&et.func_name)
+    );
+    let name_q = quote_ident(&et.name);
+    if et.tags.is_empty() {
+        out.push_str(&format!(
+            "CREATE EVENT TRIGGER {name_q} ON {}\n    EXECUTE FUNCTION {func_qname}();\n",
+            et.event
+        ));
+    } else {
+        out.push_str(&format!(
+            "CREATE EVENT TRIGGER {name_q} ON {}\n    WHEN TAG IN ({})\n    EXECUTE FUNCTION {func_qname}();\n",
+            et.event, et.tags
+        ));
+    }
+}
+
+/// Write extended statistics DDL (CREATE STATISTICS + optional ALTER STATISTICS).
+pub fn write_create_extended_statistics(out: &mut String, stat: &ExtendedStatInfo) {
+    out.push_str(&format!(
+        "--\n-- Name: {}; Type: STATISTICS\n--\n\n",
+        stat.name
+    ));
+    let def = stat.definition.trim_end();
+    out.push_str(def);
+    if !def.ends_with(';') {
+        out.push(';');
+    }
+    out.push('\n');
+
+    // If stattarget >= 0, emit ALTER STATISTICS ... SET STATISTICS ...
+    if stat.stattarget >= 0 {
+        let qname = format!("{}.{}", quote_ident(&stat.schema), quote_ident(&stat.name));
+        out.push_str(&format!(
+            "ALTER STATISTICS {qname} SET STATISTICS {};\n",
+            stat.stattarget
+        ));
+    }
+}
+
+/// Write a CREATE TRANSFORM statement.
+pub fn write_create_transform(out: &mut String, tr: &TransformInfo) {
+    out.push_str(&format!(
+        "--\n-- Name: TRANSFORM FOR {}; Type: TRANSFORM\n--\n\n",
+        tr.type_name
+    ));
+    out.push_str(&format!(
+        "CREATE TRANSFORM FOR {} LANGUAGE {}\n(\n",
+        tr.type_name,
+        quote_ident(&tr.lang_name)
+    ));
+    if !tr.fromsql.is_empty() {
+        out.push_str(&format!("    FROM SQL WITH FUNCTION {},\n", tr.fromsql));
+    }
+    if !tr.tosql.is_empty() {
+        out.push_str(&format!("    TO SQL WITH FUNCTION {}\n", tr.tosql));
+    }
+    out.push_str(");\n");
+}
+
+/// Write COMMENT ON TYPE statements.
+pub fn write_type_comments(out: &mut String, comments: &[TypeCommentInfo]) {
+    for c in comments {
+        let escaped = c.comment.replace('\'', "''");
+        out.push_str(&format!(
+            "COMMENT ON TYPE {} IS '{}';\n",
+            c.type_name, escaped
+        ));
     }
 }
 
