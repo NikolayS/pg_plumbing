@@ -7,4 +7,5 @@ mod t001_basic;
 mod t002_pg_dump;
 mod t003_pg_dump_with_server;
 mod t004_pg_dump_parallel;
+mod t005_dir_format_dedup;
 mod t010_dump_connstr;

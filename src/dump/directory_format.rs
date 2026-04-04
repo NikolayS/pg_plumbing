@@ -93,11 +93,24 @@ pub async fn dump_directory(opts: &DumpOptions, output_dir: &str) -> Result<()> 
         }
 
         // 3. Emit table DDL (partitioned parent tables before their children).
+        // Track sequences already emitted so that a sequence shared between
+        // multiple tables (duplicate `deptype='a'` rows in pg_depend) is only
+        // written once.  Duplicate TOC entries would cause CREATE SEQUENCE to
+        // run twice on restore, producing "ERROR: relation already exists".
+        // Fixes: issue #21.
+        let mut emitted_sequences: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         for table in &tables {
             // Dump any sequences that this table's columns depend on first.
             let sequences = get_table_sequences(&client, table).await?;
             for (seq_schema, seq_name, seq_ddl) in &sequences {
                 let seq_key = format!("{seq_schema}.{seq_name}");
+
+                // Skip if we already emitted this sequence for a prior table.
+                if !emitted_sequences.insert(seq_key.clone()) {
+                    continue; // already emitted this sequence
+                }
+
                 let safe_schema = seq_schema.replace('.', "_");
                 let safe_name = seq_name.replace('.', "_");
                 let seq_file = format!("{safe_schema}__{safe_name}.seq.ddl");

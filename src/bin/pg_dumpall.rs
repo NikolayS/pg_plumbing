@@ -106,8 +106,8 @@ fn main() {
     // Too many positional args
     if cli.extra_args.len() > 1 {
         eprintln!(
-            "pg_dumpall: too many command-line arguments (first is \"{}\")",
-            cli.extra_args[1]
+            "pg_dumpall: error: too many command-line arguments (first is \"{}\")",
+            cli.extra_args[0]
         );
         std::process::exit(1);
     }
@@ -115,7 +115,7 @@ fn main() {
     // Validate format if provided
     if let Some(ref fmt) = cli.format {
         if !validate_format(fmt) {
-            eprintln!("pg_dumpall: invalid output format \"{fmt}\"");
+            eprintln!("pg_dumpall: error: invalid output format \"{fmt}\"");
             std::process::exit(1);
         }
     }
@@ -124,14 +124,14 @@ fn main() {
 
     // --clean + --data-only
     if cli.clean && cli.data_only {
-        eprintln!("pg_dumpall: options -c/--clean and -a/--data-only cannot be used together");
+        eprintln!("pg_dumpall: error: options -c/--clean and -a/--data-only cannot be used together");
         std::process::exit(1);
     }
 
     // --globals-only + --roles-only
     if cli.globals_only && cli.roles_only {
         eprintln!(
-            "pg_dumpall: options -g/--globals-only and -r/--roles-only cannot be used together"
+            "pg_dumpall: error: options -g/--globals-only and -r/--roles-only cannot be used together"
         );
         std::process::exit(1);
     }
@@ -139,7 +139,7 @@ fn main() {
     // --globals-only + --tablespaces-only
     if cli.globals_only && cli.tablespaces_only {
         eprintln!(
-            "pg_dumpall: options -g/--globals-only and -t/--tablespaces-only cannot be used together"
+            "pg_dumpall: error: options -g/--globals-only and -t/--tablespaces-only cannot be used together"
         );
         std::process::exit(1);
     }
@@ -147,34 +147,34 @@ fn main() {
     // --roles-only + --tablespaces-only
     if cli.roles_only && cli.tablespaces_only {
         eprintln!(
-            "pg_dumpall: options -r/--roles-only and -t/--tablespaces-only cannot be used together"
+            "pg_dumpall: error: options -r/--roles-only and -t/--tablespaces-only cannot be used together"
         );
         std::process::exit(1);
     }
 
     // --if-exists requires --clean
     if cli.if_exists && !cli.clean {
-        eprintln!("pg_dumpall: option --if-exists requires option -c/--clean");
+        eprintln!("pg_dumpall: error: option --if-exists requires option -c/--clean");
         std::process::exit(1);
     }
 
     // --exclude-database + --globals-only
     if cli.exclude_database.is_some() && cli.globals_only {
         eprintln!(
-            "pg_dumpall: options --exclude-database and --globals-only cannot be used together"
+            "pg_dumpall: error: option --exclude-database cannot be used together with -g/--globals-only"
         );
         std::process::exit(1);
     }
 
     // --data-only + --no-data
     if cli.data_only && cli.no_data {
-        eprintln!("pg_dumpall: options -a/--data-only and --no-data cannot be used together");
+        eprintln!("pg_dumpall: error: options -a/--data-only and --no-data cannot be used together");
         std::process::exit(1);
     }
 
     // --schema-only + --no-schema
     if cli.schema_only && cli.no_schema {
-        eprintln!("pg_dumpall: options -s/--schema-only and --no-schema cannot be used together");
+        eprintln!("pg_dumpall: error: options -s/--schema-only and --no-schema cannot be used together");
         std::process::exit(1);
     }
 
@@ -188,7 +188,7 @@ fn main() {
 
     // --statistics + --no-statistics
     if cli.statistics && cli.no_statistics {
-        eprintln!("pg_dumpall: options --statistics and --no-statistics cannot be used together");
+        eprintln!("pg_dumpall: error: options --statistics and --no-statistics cannot be used together");
         std::process::exit(1);
     }
 
@@ -202,7 +202,7 @@ fn main() {
 
     // --restrict-key can only be used with --format=plain
     if cli.restrict_key.is_some() && !is_plain_format(format_str) {
-        eprintln!("pg_dumpall: option --restrict-key can only be used with --format=plain");
+        eprintln!("pg_dumpall: error: option --restrict-key can only be used with --format=plain");
         std::process::exit(1);
     }
 
@@ -216,11 +216,11 @@ fn main() {
 
     // Non-plain format requires --file
     if !is_plain_format(format_str) && cli.file.is_none() {
-        eprintln!("pg_dumpall: non-plain output format requires -f/--file option");
+        eprintln!("pg_dumpall: error: non-plain output format requires -f/--file option");
         std::process::exit(1);
     }
 
     // Actual dump not yet implemented.
-    eprintln!("pg_dumpall: not yet implemented");
+    eprintln!("pg_dumpall: error: not yet implemented");
     std::process::exit(1);
 }
