@@ -269,16 +269,43 @@ pub fn write_toc_entry(w: &mut impl Write, entry: &TocEntry) -> io::Result<()> {
 ///   - compressed data
 ///   - BLK_DATA + dump_id + size=0 (end-of-data marker for this entry)
 pub fn write_data_block(w: &mut impl Write, dump_id: i32, data: &[u8]) -> io::Result<()> {
-    // Compress the data.
     let compressed = compress_zlib(data)?;
+    write_data_block_compressed(w, dump_id, &compressed)
+}
+
+/// Write a pre-compressed data block for one TOC entry.
+///
+/// This is the inner implementation used by `write_data_block` after
+/// compression. Exposed as `pub(crate)` so that tests can inject an
+/// already-"compressed" buffer of arbitrary length (including one that
+/// exceeds `i32::MAX`) without having to allocate >2 GB of actual memory.
+///
+/// The overflow guard lives here — removing it from this function will
+/// cause `write_data_block_len_overflow_returns_error` to fail.
+pub fn write_data_block_compressed(
+    w: &mut impl Write,
+    dump_id: i32,
+    compressed: &[u8],
+) -> io::Result<()> {
+    // Guard against an incorrect truncating cast for tables whose compressed
+    // output would exceed i32::MAX bytes.
+    let compressed_len = i32::try_from(compressed.len()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "compressed data length {} exceeds i32::MAX; cannot write data block",
+                compressed.len()
+            ),
+        )
+    })?;
 
     // Block header: type + dump_id.
     w.write_all(&[BLK_DATA])?;
     write_int(w, dump_id)?;
     // Compressed data size.
-    write_int(w, compressed.len() as i32)?;
+    write_int(w, compressed_len)?;
     // Compressed data.
-    w.write_all(&compressed)?;
+    w.write_all(compressed)?;
 
     // End-of-data marker: another BLK_DATA with size=0.
     w.write_all(&[BLK_DATA])?;
@@ -483,8 +510,19 @@ pub fn read_next_data_block(r: &mut impl std::io::Read) -> io::Result<Option<(i3
             let compressed_size = read_int(r)?;
 
             if compressed_size <= 0 {
-                // End-of-data marker for a previous entry or zero-size block.
-                return Ok(Some((dump_id, Vec::new())));
+                // A non-positive compressed_size is invalid: valid data blocks always
+                // have a positive size (zlib output for empty input is 8 bytes), and
+                // end-of-data markers (size=0) are consumed inside the positive-size
+                // path below. Returning an error here avoids silently swallowing a
+                // corrupt or truncated block.
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid block: compressed_size {} is non-positive for dump_id {}; \
+                         archive may be corrupt or truncated",
+                        compressed_size, dump_id
+                    ),
+                ));
             }
 
             let mut compressed = vec![0u8; compressed_size as usize];
@@ -497,12 +535,40 @@ pub fn read_next_data_block(r: &mut impl std::io::Read) -> io::Result<Option<(i3
             let mut decompressed = Vec::new();
             decoder.read_to_end(&mut decompressed)?;
 
-            // Skip the end-of-data marker (BLK_DATA + dump_id + size=0).
+            // Validate the end-of-data marker (BLK_DATA + dump_id + size=0).
+            // A corrupt or truncated archive must produce a clear error.
             let mut marker_type = [0u8; 1];
             r.read_exact(&mut marker_type)?;
-            if marker_type[0] == BLK_DATA {
-                let _id = read_int(r)?;
-                let _sz = read_int(r)?;
+            if marker_type[0] != BLK_DATA {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid end-of-data marker byte: expected BLK_DATA ({}), got {}",
+                        BLK_DATA, marker_type[0]
+                    ),
+                ));
+            }
+            let marker_id = read_int(r)?;
+            if marker_id != dump_id {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "corrupt archive: end-of-data marker dump_id {} != block dump_id {}; \
+                         archive may be spliced or truncated",
+                        marker_id, dump_id
+                    ),
+                ));
+            }
+            let marker_size = read_int(r)?;
+            if marker_size != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "corrupt archive: end-of-data marker has non-zero size {} (expected 0); \
+                         archive may be truncated",
+                        marker_size
+                    ),
+                ));
             }
 
             Ok(Some((dump_id, decompressed)))

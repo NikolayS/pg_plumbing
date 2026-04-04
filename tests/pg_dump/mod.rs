@@ -8,4 +8,5 @@ mod t002_pg_dump;
 mod t003_pg_dump_with_server;
 mod t004_pg_dump_parallel;
 mod t005_dir_format_dedup;
+mod t006_custom_format_hardening;
 mod t010_dump_connstr;
