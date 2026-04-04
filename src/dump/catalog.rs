@@ -838,8 +838,9 @@ pub struct ExtendedStatInfo {
     pub name: String,
     /// DDL from pg_get_statisticsobjdef.
     pub definition: String,
-    /// Statistics target (-1 = default).
-    pub stattarget: i16,
+    /// Statistics target (-1 = default; None means unset on PG17+).
+    /// Stored as i32 to handle both PG 16 (integer) and PG 17 (smallint/NULL).
+    pub stattarget: Option<i32>,
 }
 
 /// Metadata for a CREATE TRANSFORM.
@@ -1086,7 +1087,7 @@ pub async fn get_extended_statistics(
             "SELECT n.nspname AS schema_name,
                     s.stxname AS stat_name,
                     pg_catalog.pg_get_statisticsobjdef(s.oid) AS definition,
-                    s.stxstattarget AS stattarget
+                    s.stxstattarget::bigint AS stattarget
              FROM pg_catalog.pg_statistic_ext s
              JOIN pg_catalog.pg_namespace n ON n.oid = s.stxnamespace
              WHERE n.nspname != all($1)
@@ -1112,7 +1113,7 @@ pub async fn get_extended_statistics(
             schema: schema.to_string(),
             name: row.get::<_, &str>("stat_name").to_string(),
             definition: definition.unwrap_or_default(),
-            stattarget: row.get("stattarget"),
+            stattarget: row.get::<_, Option<i64>>("stattarget").map(|v| v as i32),
         });
     }
 

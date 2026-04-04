@@ -593,13 +593,15 @@ pub fn write_create_extended_statistics(out: &mut String, stat: &ExtendedStatInf
     }
     out.push('\n');
 
-    // If stattarget >= 0, emit ALTER STATISTICS ... SET STATISTICS ...
-    if stat.stattarget >= 0 {
-        let qname = format!("{}.{}", quote_ident(&stat.schema), quote_ident(&stat.name));
-        out.push_str(&format!(
-            "ALTER STATISTICS {qname} SET STATISTICS {};\n",
-            stat.stattarget
-        ));
+    // If stattarget is explicitly set (not NULL/default), emit ALTER STATISTICS.
+    if let Some(target) = stat.stattarget {
+        if target >= 0 {
+            let qname = format!("{}.{}", quote_ident(&stat.schema), quote_ident(&stat.name));
+            out.push_str(&format!(
+                "ALTER STATISTICS {qname} SET STATISTICS {};\n",
+                target
+            ));
+        }
     }
 }
 
