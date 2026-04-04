@@ -140,6 +140,38 @@ struct Cli {
     #[arg(long = "no-policies")]
     no_policies: bool,
 
+    /// Do not dump TOAST compression settings
+    #[arg(long = "no-toast-compression")]
+    no_toast_compression: bool,
+
+    /// Do not dump subscriptions
+    #[arg(long = "no-subscriptions")]
+    no_subscriptions: bool,
+
+    /// Do not dump table access method information
+    #[arg(long = "no-table-access-method")]
+    no_table_access_method: bool,
+
+    /// Do not dump data (schema-only equivalent)
+    #[arg(long = "no-data")]
+    no_data: bool,
+
+    /// Do not dump schema (data-only equivalent)
+    #[arg(long = "no-schema")]
+    no_schema: bool,
+
+    /// Dump only the named section: pre-data, data, or post-data
+    #[arg(long = "section")]
+    section: Option<String>,
+
+    /// Dump as the specified role name
+    #[arg(long = "role")]
+    role: Option<String>,
+
+    /// Enable binary upgrade mode
+    #[arg(long = "binary-upgrade")]
+    binary_upgrade: bool,
+
     // ---- Connection options ----
     /// Database server host or socket directory (overrides PGHOST)
     #[arg(short = 'h', long = "host")]
@@ -355,6 +387,16 @@ fn main() {
         no_large_objects: cli.no_large_objects,
         large_objects: cli.large_objects,
         no_policies: cli.no_policies,
+        no_toast_compression: cli.no_toast_compression,
+        no_subscriptions: cli.no_subscriptions,
+        no_table_access_method: cli.no_table_access_method,
+        no_statistics: cli.no_statistics,
+        statistics_only: cli.statistics_only,
+        no_data: cli.no_data,
+        no_schema: cli.no_schema,
+        section: cli.section.clone(),
+        role: cli.role.clone(),
+        binary_upgrade: cli.binary_upgrade,
     };
 
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");

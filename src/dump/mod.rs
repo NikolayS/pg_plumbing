@@ -57,6 +57,26 @@ pub struct DumpOptions {
     pub large_objects: bool,
     /// Do not dump row-level security policies.
     pub no_policies: bool,
+    /// Do not dump TOAST compression settings.
+    pub no_toast_compression: bool,
+    /// Do not dump subscriptions.
+    pub no_subscriptions: bool,
+    /// Do not dump table access method information.
+    pub no_table_access_method: bool,
+    /// Do not dump statistics.
+    pub no_statistics: bool,
+    /// Dump only statistics.
+    pub statistics_only: bool,
+    /// Do not dump data (equivalent to schema_only).
+    pub no_data: bool,
+    /// Do not dump schema (equivalent to data_only).
+    pub no_schema: bool,
+    /// Dump only the named section: pre-data, data, or post-data.
+    pub section: Option<String>,
+    /// Dump as the specified role.
+    pub role: Option<String>,
+    /// Enable binary upgrade mode.
+    pub binary_upgrade: bool,
 }
 
 /// Dump a database in plain SQL format.

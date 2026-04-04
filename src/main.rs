@@ -114,6 +114,46 @@ pub struct PgDumpArgs {
     #[arg(long = "no-policies")]
     no_policies: bool,
 
+    /// Do not dump TOAST compression settings.
+    #[arg(long = "no-toast-compression")]
+    no_toast_compression: bool,
+
+    /// Do not dump subscriptions.
+    #[arg(long = "no-subscriptions")]
+    no_subscriptions: bool,
+
+    /// Do not dump table access method information.
+    #[arg(long = "no-table-access-method")]
+    no_table_access_method: bool,
+
+    /// Do not dump statistics (extended statistics targets etc.).
+    #[arg(long = "no-statistics")]
+    no_statistics: bool,
+
+    /// Dump only statistics; no schema or data.
+    #[arg(long = "statistics-only")]
+    statistics_only: bool,
+
+    /// Do not dump data (alias-style: different from --schema-only).
+    #[arg(long = "no-data")]
+    no_data: bool,
+
+    /// Do not dump schema (alias-style: different from --data-only).
+    #[arg(long = "no-schema")]
+    no_schema: bool,
+
+    /// Dump only the named section: pre-data, data, or post-data.
+    #[arg(long = "section")]
+    section: Option<String>,
+
+    /// Dump as the specified role name.
+    #[arg(long = "role")]
+    role: Option<String>,
+
+    /// Enable binary upgrade mode (for pg_upgrade).
+    #[arg(long = "binary-upgrade")]
+    binary_upgrade: bool,
+
     /// Positional database name (alternative to -d).
     #[arg()]
     database: Option<String>,
@@ -203,6 +243,16 @@ async fn run_pg_dump(args: PgDumpArgs) -> Result<()> {
         no_large_objects: args.no_large_objects,
         large_objects: args.large_objects,
         no_policies: args.no_policies,
+        no_toast_compression: args.no_toast_compression,
+        no_subscriptions: args.no_subscriptions,
+        no_table_access_method: args.no_table_access_method,
+        no_statistics: args.no_statistics,
+        statistics_only: args.statistics_only,
+        no_data: args.no_data,
+        no_schema: args.no_schema,
+        section: args.section,
+        role: args.role,
+        binary_upgrade: args.binary_upgrade,
     };
 
     match args.format {

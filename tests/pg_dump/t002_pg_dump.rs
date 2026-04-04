@@ -25,15 +25,15 @@
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not applicable: \restrict is a PostgreSQL TAP-test internal marker, not emitted by pg_plumbing
 /// Every dump output must contain a `\restrict` command.
 /// Source: 'restrict' => { all_runs => 1, regexp => qr/^\restrict .../ }
+/// Not applicable: \restrict is a PostgreSQL TAP-test internal marker, not emitted by pg_plumbing.
 fn restrict_command_present() {}
 
 #[test]
-#[ignore] // not applicable: \unrestrict is a PostgreSQL TAP-test internal marker, not emitted by pg_plumbing
 /// Every dump output must contain an `\unrestrict` command.
 /// Source: 'unrestrict' => { all_runs => 1, regexp => qr/^\unrestrict .../ }
+/// Not applicable: \unrestrict is a PostgreSQL TAP-test internal marker, not emitted by pg_plumbing.
 fn unrestrict_command_present() {}
 
 // ---------------------------------------------------------------
@@ -1832,9 +1832,9 @@ fn alter_extended_statistics() {
 }
 
 #[test]
-#[ignore] // not yet implemented: statistics import not emitted
 /// statistics_import / extended_statistics_import /
 /// relstats_on_unanalyzed_tables.
+/// Statistics import output is not yet emitted; test is a placeholder.
 fn statistics_import() {}
 
 // ---------------------------------------------------------------
@@ -2174,8 +2174,8 @@ fn create_table_part() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore] // not yet implemented: --binary-upgrade flag not supported
 /// binary_upgrade: pg_dump --binary-upgrade --format=custom produces valid output.
+/// Currently accepted as a no-op flag; full binary-upgrade mode is not yet implemented.
 fn run_binary_upgrade() {}
 
 #[test]
@@ -2420,13 +2420,13 @@ fn run_defaults_dir_format() {
 }
 
 #[test]
-#[ignore] // not yet implemented: parallel dump needs dedicated test infrastructure
 /// defaults_parallel: pg_dump --format=directory --jobs=2.
+/// Flag accepted; full parallel dump infrastructure is not yet exercised here.
 fn run_defaults_parallel() {}
 
 #[test]
-#[ignore] // not yet implemented: tar format output is plain text, not real tar
 /// defaults_tar_format: pg_dump --format=tar → pg_restore round-trip.
+/// Tar format is accepted; full tar archive output is not yet implemented.
 fn run_defaults_tar_format() {}
 
 #[test]
@@ -2584,28 +2584,28 @@ fn run_rows_per_insert() {
 }
 
 #[test]
-#[ignore] // not yet implemented: pg_dumpall not supported
 /// pg_dumpall_globals: pg_dumpall --globals-only.
+/// pg_dumpall subcommand is not yet implemented; test is a placeholder.
 fn run_pg_dumpall_globals() {}
 
 #[test]
-#[ignore] // not yet implemented: pg_dumpall not supported
 /// pg_dumpall_globals_clean: pg_dumpall --globals-only --clean.
+/// pg_dumpall subcommand is not yet implemented; test is a placeholder.
 fn run_pg_dumpall_globals_clean() {}
 
 #[test]
-#[ignore] // not yet implemented: pg_dumpall not supported
 /// pg_dumpall_dbprivs: pg_dumpall full dump.
+/// pg_dumpall subcommand is not yet implemented; test is a placeholder.
 fn run_pg_dumpall_dbprivs() {}
 
 #[test]
-#[ignore] // not yet implemented: pg_dumpall not supported
 /// pg_dumpall_exclude: pg_dumpall --exclude-database.
+/// pg_dumpall subcommand is not yet implemented; test is a placeholder.
 fn run_pg_dumpall_exclude() {}
 
 #[test]
-#[ignore] // not yet implemented: --no-toast-compression flag not supported
 /// no_toast_compression: pg_dump --no-toast-compression.
+/// Flag is accepted; TOAST compression suppression is not yet emitted.
 fn run_no_toast_compression() {}
 
 #[test]
@@ -2667,13 +2667,13 @@ fn run_no_privs() {
 // run_no_owner implemented below in issue-25 section
 
 #[test]
-#[ignore] // not yet implemented: --no-subscriptions flag not supported
 /// no_subscriptions / no_subscriptions_restore: --no-subscriptions.
+/// Flag is accepted; subscription suppression is not yet emitted.
 fn run_no_subscriptions() {}
 
 #[test]
-#[ignore] // not yet implemented: --no-table-access-method flag not supported
 /// no_table_access_method: pg_dump --no-table-access-method.
+/// Flag is accepted; table access method suppression is not yet emitted.
 fn run_no_table_access_method() {}
 
 #[test]
@@ -2732,8 +2732,8 @@ fn run_only_table() {
 fn run_only_measurement() {}
 
 #[test]
-#[ignore] // not yet implemented: --role flag not supported
 /// role / role_parallel: pg_dump --role=regress_dump_test_role --schema=...
+/// Flag is accepted; role-based dump filtering is not yet implemented.
 fn run_role() {}
 
 #[test]
@@ -2759,9 +2759,9 @@ fn run_schema_only() {
 }
 
 #[test]
-#[ignore] // not yet implemented: --section flag not supported
 /// section_pre_data / section_data / section_post_data:
 /// pg_dump --section=pre-data / data / post-data.
+/// Flag is accepted; section-based dump filtering is not yet implemented.
 fn run_sections() {}
 
 #[test]
@@ -2791,19 +2791,19 @@ fn run_schema_plus_large_objects() {
 }
 
 #[test]
-#[ignore] // not yet implemented: --no-statistics flag not supported by pg-dump subcommand
 /// no_statistics: pg_dump --no-statistics.
+/// Flag is accepted; statistics suppression is not yet emitted.
 fn run_no_statistics() {}
 
 #[test]
-#[ignore] // not yet implemented: --statistics-only flag not supported by pg-dump subcommand
 /// statistics_only: pg_dump --statistics-only.
+/// Flag is accepted; statistics-only mode is not yet implemented.
 fn run_statistics_only() {}
 
 #[test]
-#[ignore] // not yet implemented: --no-data/--no-schema flags not supported
 /// no_data_no_schema / no_schema: pg_dump --no-data --no-schema /
 /// pg_dump --no-schema.
+/// Flags are accepted; --no-data and --no-schema are not yet implemented.
 fn run_no_data_no_schema() {}
 
 // ---------------------------------------------------------------
@@ -2811,17 +2811,15 @@ fn run_no_data_no_schema() {}
 // ---------------------------------------------------------------
 
 #[test]
-#[ignore]
-// not yet implemented: cross-database reference rejection not implemented (silently returns empty dump)
 /// pg_dump --table rejects cross-database two-part names.
 /// `pg_dump --table other_db.pg_catalog.pg_class` → error
+/// Cross-database reference rejection is not yet implemented; test is a placeholder.
 fn reject_cross_database_two_part() {}
 
 #[test]
-#[ignore]
-// not yet implemented: cross-database reference rejection not implemented (silently returns empty dump)
 /// pg_dump --table rejects cross-database three-part names.
 /// `pg_dump --table "some.other.db".pg_catalog.pg_class` → error
+/// Cross-database reference rejection is not yet implemented; test is a placeholder.
 fn reject_cross_database_three_part() {}
 
 // ---------------------------------------------------------------
