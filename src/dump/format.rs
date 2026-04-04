@@ -165,10 +165,7 @@ pub fn write_alter_sequence(out: &mut String, seq: &SequenceInfo) {
 /// Write a `CREATE OR REPLACE VIEW` statement to the output buffer.
 pub fn write_create_view(out: &mut String, view: &ViewInfo) {
     let qname = view.qualified_name();
-    out.push_str(&format!(
-        "--\n-- Name: {}; Type: VIEW\n--\n\n",
-        view.name
-    ));
+    out.push_str(&format!("--\n-- Name: {}; Type: VIEW\n--\n\n", view.name));
     out.push_str(&format!("CREATE OR REPLACE VIEW {qname} AS\n"));
     let def = view.definition.trim_end();
     out.push_str(def);
