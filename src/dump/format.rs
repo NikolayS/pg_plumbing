@@ -1639,13 +1639,27 @@ pub fn write_alter_table_add_identity(out: &mut String, iseq: &IdentitySequenceI
     out.push_str(&format!("    SEQUENCE NAME {}\n", iseq.seq_name));
     out.push_str(&format!("    START WITH {}\n", iseq.start_value));
     out.push_str(&format!("    INCREMENT BY {}\n", iseq.increment_by));
-    // Determine NO MINVALUE / NO MAXVALUE based on typical defaults.
-    // min_value = 1 => NO MINVALUE for ascending;
-    // max_value = i64::MAX or very large => NO MAXVALUE.
-    let no_min = iseq.min_value.map(|m| m == 1).unwrap_or(true);
+    // Determine NO MINVALUE / NO MAXVALUE using the same logic as pg_dump:
+    // compare against the type's actual minimum/maximum bounds.
+    //   int2 (smallint): min=-32768,           max=32767
+    //   int4 (integer):  min=-2147483648,       max=2147483647
+    //   int8 (bigint):   min=-9223372036854775808, max=9223372036854775807
+    // Ascending sequence: NO MINVALUE if min == 1; NO MAXVALUE if max == type_max.
+    // Descending sequence (increment < 0): NO MINVALUE if min == type_min;
+    //   NO MAXVALUE if max == -1.
+    let (type_min, type_max): (i64, i64) = match iseq.seqtype {
+        's' => (-32768, 32767),
+        'i' => (-2_147_483_648, 2_147_483_647),
+        _ => (i64::MIN, i64::MAX), // bigint
+    };
+    let ascending = iseq.increment_by > 0;
+    let no_min = iseq
+        .min_value
+        .map(|m| if ascending { m == 1 } else { m == type_min })
+        .unwrap_or(true);
     let no_max = iseq
         .max_value
-        .map(|m| m == i64::MAX || m >= 2_147_483_647)
+        .map(|m| if ascending { m == type_max } else { m == -1 })
         .unwrap_or(true);
     if no_min {
         out.push_str("    NO MINVALUE\n");

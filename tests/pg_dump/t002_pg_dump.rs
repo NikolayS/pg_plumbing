@@ -1747,6 +1747,10 @@ fn create_table_identity() {
         stdout.contains("GENERATED ALWAYS AS IDENTITY"),
         "table should include GENERATED ALWAYS AS IDENTITY column:\n{stdout}"
     );
+    assert!(
+        stdout.contains("NO MINVALUE"),
+        "ascending identity column should emit NO MINVALUE, not MINVALUE 1:\n{stdout}"
+    );
 }
 
 #[test]
