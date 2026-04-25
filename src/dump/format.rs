@@ -1644,7 +1644,7 @@ pub fn write_alter_table_add_identity(out: &mut String, iseq: &IdentitySequenceI
     //   int2 (smallint): min=-32768,           max=32767
     //   int4 (integer):  min=-2147483648,       max=2147483647
     //   int8 (bigint):   min=-9223372036854775808, max=9223372036854775807
-    // Ascending sequence: NO MINVALUE if min == type_min; NO MAXVALUE if max == type_max.
+    // Ascending sequence: NO MINVALUE if min == 1; NO MAXVALUE if max == type_max.
     // Descending sequence (increment < 0): NO MINVALUE if min == type_min;
     //   NO MAXVALUE if max == -1.
     let (type_min, type_max): (i64, i64) = match iseq.seqtype {
@@ -1655,7 +1655,7 @@ pub fn write_alter_table_add_identity(out: &mut String, iseq: &IdentitySequenceI
     let ascending = iseq.increment_by > 0;
     let no_min = iseq
         .min_value
-        .map(|m| if ascending { m == type_min } else { m == 1 })
+        .map(|m| if ascending { m == 1 } else { m == type_min })
         .unwrap_or(true);
     let no_max = iseq
         .max_value
