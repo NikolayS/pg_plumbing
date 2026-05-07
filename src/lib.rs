@@ -17,6 +17,71 @@ pub struct ConnParams {
     pub password: Option<String>,
 }
 
+impl ConnParams {
+    fn has_explicit_values(&self) -> bool {
+        self.host.is_some() || self.port.is_some() || self.user.is_some() || self.password.is_some()
+    }
+}
+
+fn conninfo_value(value: &str) -> String {
+    let simple = !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-'));
+
+    if simple {
+        value.to_string()
+    } else {
+        let escaped = value.replace('\\', "\\\\").replace('\'', "\\'");
+        format!("'{escaped}'")
+    }
+}
+
+fn append_explicit_params(mut conninfo: String, params: &ConnParams) -> String {
+    if let Some(ref host) = params.host {
+        conninfo.push_str(&format!(" host={}", conninfo_value(host)));
+    }
+    if let Some(ref port) = params.port {
+        conninfo.push_str(&format!(" port={}", conninfo_value(port)));
+    }
+    if let Some(ref user) = params.user {
+        conninfo.push_str(&format!(" user={}", conninfo_value(user)));
+    }
+    if let Some(ref password) = params.password {
+        conninfo.push_str(&format!(" password={}", conninfo_value(password)));
+    }
+    conninfo
+}
+
+fn looks_like_key_value_conninfo(value: &str) -> bool {
+    let Some(eq_pos) = value.find('=') else {
+        return false;
+    };
+
+    let key = &value[..eq_pos];
+    matches!(
+        key,
+        "application_name"
+            | "connect_timeout"
+            | "dbname"
+            | "fallback_application_name"
+            | "host"
+            | "hostaddr"
+            | "options"
+            | "passfile"
+            | "password"
+            | "port"
+            | "replication"
+            | "service"
+            | "sslcert"
+            | "sslkey"
+            | "sslmode"
+            | "sslrootcert"
+            | "target_session_attrs"
+            | "user"
+    )
+}
+
 /// Build a libpq-style connection string from a database name and optional
 /// connection parameters.
 ///
@@ -31,11 +96,17 @@ pub struct ConnParams {
 pub fn build_conninfo_with_params(dbname: &str, params: &ConnParams) -> String {
     // URI pass-through
     if dbname.starts_with("postgresql://") || dbname.starts_with("postgres://") {
+        if params.has_explicit_values() {
+            return append_explicit_params(format!("dbname={}", conninfo_value(dbname)), params);
+        }
         return dbname.to_string();
     }
 
     // key=value connstring pass-through
-    if dbname.contains('=') {
+    if looks_like_key_value_conninfo(dbname) {
+        if params.has_explicit_values() {
+            return append_explicit_params(dbname.to_string(), params);
+        }
         return dbname.to_string();
     }
 
@@ -61,9 +132,15 @@ pub fn build_conninfo_with_params(dbname: &str, params: &ConnParams) -> String {
         .or_else(|| std::env::var("PGPASSWORD").ok())
         .unwrap_or_default();
 
-    let mut s = format!("host={host} port={port} user={user} dbname={dbname}");
+    let mut s = format!(
+        "host={} port={} user={} dbname={}",
+        conninfo_value(&host),
+        conninfo_value(&port),
+        conninfo_value(&user),
+        conninfo_value(dbname)
+    );
     if !password.is_empty() {
-        s.push_str(&format!(" password={password}"));
+        s.push_str(&format!(" password={}", conninfo_value(&password)));
     }
     s
 }
@@ -123,5 +200,46 @@ mod tests {
         };
         let result = build_conninfo_with_params("db", &params);
         assert_eq!(result, "host=h port=5432 user=u dbname=db password=secret");
+    }
+
+    #[test]
+    fn conninfo_bare_dbname_quotes_special_chars() {
+        let params = ConnParams {
+            host: Some("local socket".to_string()),
+            port: Some("5432".to_string()),
+            user: Some("user name\\with'quotes".to_string()),
+            password: Some("pass word".to_string()),
+        };
+        let result = build_conninfo_with_params("db name\\with'quotes", &params);
+        assert_eq!(
+            result,
+            "host='local socket' port=5432 user='user name\\\\with\\'quotes' dbname='db name\\\\with\\'quotes' password='pass word'"
+        );
+    }
+
+    #[test]
+    fn conninfo_bare_dbname_with_equals_is_not_connstring() {
+        let params = ConnParams {
+            host: Some("h".to_string()),
+            port: Some("5432".to_string()),
+            user: Some("u".to_string()),
+            password: Some("".to_string()),
+        };
+        let result = build_conninfo_with_params("db=name", &params);
+        assert_eq!(result, "host=h port=5432 user=u dbname='db=name'");
+    }
+
+    #[test]
+    fn conninfo_connstring_appends_explicit_overrides() {
+        let params = ConnParams {
+            host: None,
+            port: Some("6543".to_string()),
+            user: Some("override user".to_string()),
+            password: None,
+        };
+        assert_eq!(
+            build_conninfo_with_params("dbname=template1 user=original", &params),
+            "dbname=template1 user=original port=6543 user='override user'"
+        );
     }
 }
