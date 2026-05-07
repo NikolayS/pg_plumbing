@@ -8,10 +8,11 @@
 //! does not provide that cluster, so these tests keep the t010 cases live by
 //! asserting the behavior that pg_dump/pg_restore rely on before opening a
 //! connection: bare names are emitted as safely quoted libpq-style conninfo,
-//! while already-formed connection strings are preserved and explicit CLI
-//! connection options are appended as overrides.
+//! while already-formed connection strings keep tokio-postgres `Config`
+//! semantics when explicit CLI connection options are applied as overrides.
 
 use pg_plumbing::{build_conninfo_with_params, ConnParams};
+use tokio_postgres::config::Host;
 
 fn params_for(user: &str) -> ConnParams {
     ConnParams {
@@ -94,10 +95,13 @@ fn pg_dumpall_connstr_dbname_accepts_connstring() {
         password: None,
     };
 
-    assert_eq!(
-        build_conninfo_with_params("dbname=template1 user=original", &params),
-        "dbname=template1 user=original port=6543 user='override user'"
-    );
+    let config = build_conninfo_with_params("dbname=template1 user=original", &params)
+        .parse::<tokio_postgres::Config>()
+        .unwrap();
+
+    assert_eq!(config.get_dbname(), Some("template1"));
+    assert_eq!(config.get_user(), Some("override user"));
+    assert_eq!(config.get_ports(), &[6543]);
 }
 
 // ---------------------------------------------------------------
@@ -168,8 +172,14 @@ fn restore_via_psql_cmdline() {
         },
     );
 
+    let config = conninfo.parse::<tokio_postgres::Config>().unwrap();
+
+    assert!(!conninfo.contains("dbname='postgresql://"));
+    assert_eq!(config.get_dbname(), Some("template1"));
     assert_eq!(
-        conninfo,
-        "dbname='postgresql://original@example.invalid/template1' port=8765 user='cmdline user'"
+        config.get_hosts(),
+        &[Host::Tcp("example.invalid".to_string())]
     );
+    assert_eq!(config.get_ports(), &[8765]);
+    assert_eq!(config.get_user(), Some("cmdline user"));
 }
